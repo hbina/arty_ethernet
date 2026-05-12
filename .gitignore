@@ -41,6 +41,7 @@ csim.exe
 *.dcp
 
 # Local editor/OS files
+__pycache__/
 *~
 .DS_Store
 .vscode/

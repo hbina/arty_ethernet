@@ -20,6 +20,7 @@ create_project -force hls_blink_vivado $build_dir -part $part
 set_property target_language Verilog [current_project]
 
 read_verilog $hls_rtl
+read_verilog [file join $flow_dir src mii_rx_monitor.v]
 read_verilog [file join $flow_dir src hls_top.v]
 read_xdc [file join $repo_dir constraints arty_a7.xdc]
 
