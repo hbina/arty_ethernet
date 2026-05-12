@@ -1,0 +1,46 @@
+# Vivado/Vitis generated build outputs
+.Xil/
+build/
+hls_blink/build/
+logs/
+
+# Vivado/Vitis logs and journals
+*.jou
+*.log
+*.str
+*.backup.jou
+*.backup.log
+clockInfo.txt
+
+# Vivado generated project artifacts
+*.xpr
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+*.gen/
+
+# HLS generated artifacts
+*.app/
+*.autopilot/
+*.component/
+*.compgen/
+*.dat
+*.db
+*.rpt
+*.sched
+*.xml
+*.zip
+csim.exe
+
+# Hardware manager temporary output
+*.ltx
+*.bit
+*.dcp
+
+# Local editor/OS files
+*~
+.DS_Store
+.vscode/
