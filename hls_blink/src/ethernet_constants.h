@@ -14,9 +14,9 @@ static const ap_uint<5> ETH_HEADER_BYTES = 14;
 static const ap_uint<6> IFG_NIBBLES = 24;
 
 struct EthHeader {
-    ap_uint<48> dst_mac;
-    ap_uint<48> src_mac;
-    ap_uint<16> ethertype;
+  ap_uint<48> dst_mac;
+  ap_uint<48> src_mac;
+  ap_uint<16> ethertype;
 };
 
 #endif
