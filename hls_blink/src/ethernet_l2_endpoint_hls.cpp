@@ -1,17 +1,25 @@
 #include "ap_int.h"
+#include "arp.h"
 #include "ethernet_constants.h"
 #include "ethernet_framer.h"
 #include "ethernet_mii.h"
 #include "ethernet_rx.h"
+#include "packet_views.h"
 
-enum TxRequestKind { TX_REQ_NONE = 0, TX_REQ_ACK = 1, TX_REQ_BEACON = 2 };
+enum TxRequestKind {
+  TX_REQ_NONE = 0,
+  TX_REQ_ACK = 1,
+  TX_REQ_BEACON = 2,
+  TX_REQ_ARP_REPLY = 3
+};
 
 struct TxRequest {
   bool valid;
-  ap_uint<48> dst_mac;
-  ap_uint<16> ethertype;
+  EthHeader header;
   ap_uint<11> payload_len;
   TxRequestKind request_kind;
+  ap_uint<48> arp_requester_mac;
+  ap_uint<32> arp_requester_ip;
 };
 
 // Return one byte from the fixed ACK payload literal, ARTY_ACK.
@@ -71,14 +79,22 @@ static ap_uint<8> beacon_payload_literal_byte(ap_uint<4> index) {
 // remain a one-cycle initiation-interval pipeline.
 static void
 prepare_payload_step(ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-                     TxRequestKind request_kind, ap_uint<4> payload_index,
-                     bool &done) {
+                     TxRequestKind request_kind, ap_uint<5> payload_index,
+                     ap_uint<48> arp_requester_mac,
+                     ap_uint<32> arp_requester_ip, bool &done) {
 #pragma HLS INLINE
-  ap_uint<11> payload_len =
-      (request_kind == TX_REQ_ACK) ? ap_uint<11>(8) : ap_uint<11>(11);
-  ap_uint<8> payload_byte = (request_kind == TX_REQ_ACK)
-                                ? ack_payload_literal_byte(payload_index)
-                                : beacon_payload_literal_byte(payload_index);
+  ap_uint<11> payload_len = 11;
+  ap_uint<8> payload_byte = beacon_payload_literal_byte(payload_index);
+
+  if (request_kind == TX_REQ_ACK) {
+    payload_len = 8;
+    payload_byte = ack_payload_literal_byte(payload_index);
+  } else if (request_kind == TX_REQ_ARP_REPLY) {
+    payload_len = ARP_PAYLOAD_BYTES;
+    payload_byte = arp_reply_payload_byte(payload_index, arp_requester_mac,
+                                          arp_requester_ip);
+  }
+
   tx_payload_buf[payload_index] = payload_byte;
   done = (payload_index == payload_len - 1);
 }
@@ -90,50 +106,89 @@ prepare_payload_step(ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
 static void ethernet_rx_step(ap_uint<1> eth_rx_dv, ap_uint<4> eth_rxd,
                              ap_uint<1> eth_rxerr, bool &ack_pending,
                              ap_uint<48> &ack_dst_pending,
+                             bool &arp_reply_pending,
+                             ap_uint<48> &arp_requester_mac_pending,
+                             ap_uint<32> &arp_requester_ip_pending,
                              ap_uint<1> &rx_accept_toggle,
                              ap_uint<1> &rx_active) {
 #pragma HLS INLINE
   static bool rx_accept = false;
+  static ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT];
+#pragma HLS BIND_STORAGE variable = rx_payload_buf type = ram_t2p impl = bram
 
   bool frame_start;
   bool byte_valid;
   ap_uint<8> data_byte;
   bool frame_end;
-  RxEvent event;
+  EthernetFrameMeta meta;
 
   rx_active = eth_rx_dv;
   mii_rx_byte_assembler_step(eth_rx_dv, eth_rxd, frame_start, byte_valid,
                              data_byte, frame_end);
   ethernet_rx_parser_step(frame_start, byte_valid, data_byte, frame_end,
-                          eth_rxerr, event);
+                          eth_rxerr, rx_payload_buf, meta);
 
-  if (event.valid && event.accepted) {
-    ack_pending = true;
-    ack_dst_pending = event.src_mac;
-    rx_accept = !rx_accept;
+  if (meta.valid && !meta.truncated) {
+    bool dest_ok =
+        (meta.dst_mac == FPGA_MAC) || (meta.dst_mac == BROADCAST_MAC);
+    PacketView payload_view;
+    payload_view.offset = 0;
+    payload_view.len = meta.payload_len;
+
+    if (dest_ok && meta.ethertype == CUSTOM_ETHERTYPE) {
+      ack_pending = true;
+      ack_dst_pending = meta.src_mac;
+      rx_accept = !rx_accept;
+    } else if (dest_ok && meta.ethertype == ARP_ETHERTYPE) {
+      ArpRequestInfo arp_info =
+          parse_arp_ipv4_request(rx_payload_buf, payload_view);
+      if (arp_info.valid) {
+        arp_reply_pending = true;
+        arp_requester_mac_pending = arp_info.sender_mac;
+        arp_requester_ip_pending = arp_info.sender_ip;
+      }
+    } else if (meta.ethertype == IPV4_ETHERTYPE) {
+      Ipv4View ipv4 = parse_ipv4_view(rx_payload_buf, payload_view);
+      (void)ipv4;
+    }
   }
 
   rx_accept_toggle = rx_accept;
 }
 
-// Choose the next TX producer. ACKs are higher priority than periodic beacons.
+// Choose the next TX producer. ARP replies have priority over ACKs and beacons.
 // The returned request only carries metadata; payload bytes are prepared later.
-static TxRequest tx_request_arbiter_step(bool ack_pending,
+static TxRequest tx_request_arbiter_step(bool arp_reply_pending,
+                                         ap_uint<48> arp_requester_mac_pending,
+                                         ap_uint<32> arp_requester_ip_pending,
+                                         bool ack_pending,
                                          ap_uint<48> ack_dst_pending,
                                          bool beacon_pending) {
 #pragma HLS INLINE
   TxRequest request;
-  request.valid = ack_pending || beacon_pending;
-  request.dst_mac = 0;
-  request.ethertype = CUSTOM_ETHERTYPE;
+  request.valid = arp_reply_pending || ack_pending || beacon_pending;
+  request.header.dst_mac = 0;
+  request.header.src_mac = FPGA_MAC;
+  request.header.ethertype = CUSTOM_ETHERTYPE;
   request.payload_len = 0;
   request.request_kind = TX_REQ_NONE;
+  request.arp_requester_mac = 0;
+  request.arp_requester_ip = 0;
 
-  if (ack_pending) {
-    request.dst_mac = ack_dst_pending;
+  if (arp_reply_pending) {
+    request.header.dst_mac = arp_requester_mac_pending;
+    request.header.ethertype = ARP_ETHERTYPE;
+    request.payload_len = ARP_PAYLOAD_BYTES;
+    request.request_kind = TX_REQ_ARP_REPLY;
+    request.arp_requester_mac = arp_requester_mac_pending;
+    request.arp_requester_ip = arp_requester_ip_pending;
+  } else if (ack_pending) {
+    request.header.dst_mac = ack_dst_pending;
+    request.payload_len = 8;
     request.request_kind = TX_REQ_ACK;
   } else if (beacon_pending) {
-    request.dst_mac = BROADCAST_MAC;
+    request.header.dst_mac = BROADCAST_MAC;
+    request.payload_len = 11;
     request.request_kind = TX_REQ_BEACON;
   }
 
@@ -144,6 +199,9 @@ static TxRequest tx_request_arbiter_step(bool ack_pending,
 // It creates periodic beacon requests, accepts pending ACK requests from RX,
 // prepares the selected payload in BRAM, and feeds the generic framer.
 static void ethernet_tx_step(bool &ack_pending, ap_uint<48> ack_dst_pending,
+                             bool &arp_reply_pending,
+                             ap_uint<48> arp_requester_mac_pending,
+                             ap_uint<32> arp_requester_ip_pending,
                              ap_uint<1> &eth_tx_en, ap_uint<4> &eth_txd,
                              ap_uint<1> &tx_frame_toggle,
                              ap_uint<1> &tx_active) {
@@ -154,7 +212,9 @@ static void ethernet_tx_step(bool &ack_pending, ap_uint<48> ack_dst_pending,
   static bool framer_idle_last = true;
   static bool preparing_payload = false;
   static TxRequestKind prepare_kind = TX_REQ_NONE;
-  static ap_uint<4> prepare_index = 0;
+  static ap_uint<5> prepare_index = 0;
+  static ap_uint<48> prepare_arp_requester_mac = 0;
+  static ap_uint<32> prepare_arp_requester_ip = 0;
   static EthHeader pending_header = {0, FPGA_MAC, CUSTOM_ETHERTYPE};
   static ap_uint<11> pending_payload_len = 0;
 
@@ -174,22 +234,23 @@ static void ethernet_tx_step(bool &ack_pending, ap_uint<48> ack_dst_pending,
   if (!preparing_payload && framer_idle_last) {
     // Only choose a new request when no payload preparation is in progress
     // and the framer was idle on the previous cycle.
-    TxRequest request =
-        tx_request_arbiter_step(ack_pending, ack_dst_pending, beacon_pending);
+    TxRequest request = tx_request_arbiter_step(
+        arp_reply_pending, arp_requester_mac_pending, arp_requester_ip_pending,
+        ack_pending, ack_dst_pending, beacon_pending);
     if (request.valid) {
       preparing_payload = true;
       prepare_kind = request.request_kind;
       prepare_index = 0;
-      pending_header.dst_mac = request.dst_mac;
-      pending_header.src_mac = FPGA_MAC;
-      pending_header.ethertype = request.ethertype;
-      pending_payload_len = (request.request_kind == TX_REQ_ACK)
-                                ? ap_uint<11>(8)
-                                : ap_uint<11>(11);
+      prepare_arp_requester_mac = request.arp_requester_mac;
+      prepare_arp_requester_ip = request.arp_requester_ip;
+      pending_header = request.header;
+      pending_payload_len = request.payload_len;
 
       // The request is now owned by the TX path, even though its payload
       // will take several cycles to write into BRAM.
-      if (request.request_kind == TX_REQ_ACK) {
+      if (request.request_kind == TX_REQ_ARP_REPLY) {
+        arp_reply_pending = false;
+      } else if (request.request_kind == TX_REQ_ACK) {
         ack_pending = false;
       } else if (request.request_kind == TX_REQ_BEACON) {
         beacon_pending = false;
@@ -202,6 +263,7 @@ static void ethernet_tx_step(bool &ack_pending, ap_uint<48> ack_dst_pending,
     // last byte is present in BRAM.
     bool prepare_done = false;
     prepare_payload_step(tx_payload_buf, prepare_kind, prepare_index,
+                         prepare_arp_requester_mac, prepare_arp_requester_ip,
                          prepare_done);
     if (prepare_done) {
       start_header = pending_header;
@@ -245,10 +307,15 @@ extern "C" void ethernet_l2_endpoint_hls(
 
   static bool ack_pending = false;
   static ap_uint<48> ack_dst_pending = 0;
+  static bool arp_reply_pending = false;
+  static ap_uint<48> arp_requester_mac_pending = 0;
+  static ap_uint<32> arp_requester_ip_pending = 0;
 
   ethernet_rx_step(eth_rx_dv, eth_rxd, eth_rxerr, ack_pending, ack_dst_pending,
-                   rx_accept_toggle, rx_active);
+                   arp_reply_pending, arp_requester_mac_pending,
+                   arp_requester_ip_pending, rx_accept_toggle, rx_active);
 
-  ethernet_tx_step(ack_pending, ack_dst_pending, eth_tx_en, eth_txd,
-                   tx_frame_toggle, tx_active);
+  ethernet_tx_step(ack_pending, ack_dst_pending, arp_reply_pending,
+                   arp_requester_mac_pending, arp_requester_ip_pending,
+                   eth_tx_en, eth_txd, tx_frame_toggle, tx_active);
 }

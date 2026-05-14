@@ -4,6 +4,7 @@
 #include "ap_int.h"
 #include "ethernet_constants.h"
 #include "ethernet_mii.h"
+#include "protocol_helpers.h"
 
 enum TxState {
   TX_IDLE = 0,
@@ -27,26 +28,6 @@ static ap_uint<32> crc32_next_byte(ap_uint<32> crc_in, ap_uint<8> data_in) {
     }
   }
   return crc;
-}
-
-// Return one network-order MAC byte from a packed 48-bit MAC address.
-// index 0 is the first byte transmitted on Ethernet.
-static ap_uint<8> mac_byte(ap_uint<48> mac, ap_uint<3> index) {
-#pragma HLS INLINE
-  switch ((unsigned)index) {
-  case 0:
-    return mac.range(47, 40);
-  case 1:
-    return mac.range(39, 32);
-  case 2:
-    return mac.range(31, 24);
-  case 3:
-    return mac.range(23, 16);
-  case 4:
-    return mac.range(15, 8);
-  default:
-    return mac.range(7, 0);
-  }
 }
 
 // Return one byte of the 14-byte Ethernet header:

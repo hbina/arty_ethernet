@@ -6,6 +6,9 @@
 static const ap_uint<48> FPGA_MAC = 0x020000000001ULL;
 static const ap_uint<48> BROADCAST_MAC = 0xffffffffffffULL;
 static const ap_uint<16> CUSTOM_ETHERTYPE = 0x88B5;
+static const ap_uint<16> ARP_ETHERTYPE = 0x0806;
+static const ap_uint<16> IPV4_ETHERTYPE = 0x0800;
+static const ap_uint<32> FPGA_IP = 0xC0A80132;
 static const ap_uint<32> BEACON_INTERVAL_CYCLES = 25000000;
 static const int MAX_ETH_PAYLOAD_BYTES_INT = 1500;
 static const ap_uint<11> MAX_ETH_PAYLOAD_BYTES = 1500;

@@ -3,48 +3,75 @@
 
 #include "ap_int.h"
 #include "ethernet_constants.h"
+#include "packet_views.h"
 
 enum RxState { RX_SEARCH = 0, RX_DATA = 1 };
 
-struct RxEvent {
-  bool valid;
-  ap_uint<48> dst_mac;
-  ap_uint<48> src_mac;
-  ap_uint<16> ethertype;
-  bool accepted;
-};
+static void
+rx_capture_payload_byte(ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+                        ap_uint<8> data_byte, ap_uint<8> rx_fcs_tail[4],
+                        ap_uint<3> &rx_fcs_tail_count,
+                        ap_uint<11> &rx_payload_count, bool &rx_truncated) {
+#pragma HLS INLINE
+  if (rx_fcs_tail_count < 4) {
+    rx_fcs_tail[rx_fcs_tail_count] = data_byte;
+    rx_fcs_tail_count++;
+    return;
+  }
 
-// Parse an Ethernet frame header from assembled RX bytes.
-// The parser skips a standard preamble/SFD if present, records destination MAC,
-// source MAC, and EtherType, and marks the frame accepted only when it is a
-// valid custom frame for our MAC or broadcast. FCS is not checked here.
-static void ethernet_rx_parser_step(bool frame_start, bool byte_valid,
-                                    ap_uint<8> data_byte, bool frame_end,
-                                    ap_uint<1> eth_rxerr, RxEvent &event) {
+  ap_uint<8> payload_byte = rx_fcs_tail[0];
+  rx_fcs_tail[0] = rx_fcs_tail[1];
+  rx_fcs_tail[1] = rx_fcs_tail[2];
+  rx_fcs_tail[2] = rx_fcs_tail[3];
+  rx_fcs_tail[3] = data_byte;
+
+  if (rx_payload_count < MAX_ETH_PAYLOAD_BYTES) {
+    rx_payload_buf[rx_payload_count] = payload_byte;
+    rx_payload_count++;
+  } else {
+    rx_truncated = true;
+  }
+}
+
+// Capture an Ethernet frame from assembled RX bytes.
+// The parser skips a standard preamble/SFD if present, records the Ethernet
+// header, buffers up to 1500 payload bytes, and strips the four wire FCS bytes
+// with a tail delay. CRC validation is intentionally out of scope here.
+static void
+ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
+                        bool frame_end, ap_uint<1> eth_rxerr,
+                        ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+                        EthernetFrameMeta &meta) {
 #pragma HLS INLINE
   static RxState rx_state = RX_SEARCH;
   static ap_uint<4> rx_preamble_count = 0;
   static ap_uint<16> rx_byte_index = 0;
   static bool rx_frame_error = false;
-  static bool rx_dest_broadcast = true;
   static EthHeader rx_header = {0, 0, 0};
+  static ap_uint<8> rx_fcs_tail[4] = {0, 0, 0, 0};
+#pragma HLS ARRAY_PARTITION variable = rx_fcs_tail complete
+  static ap_uint<3> rx_fcs_tail_count = 0;
+  static ap_uint<11> rx_payload_count = 0;
+  static bool rx_truncated = false;
 
-  event.valid = false;
-  event.dst_mac = 0;
-  event.src_mac = 0;
-  event.ethertype = 0;
-  event.accepted = false;
+  meta.valid = false;
+  meta.truncated = false;
+  meta.dst_mac = 0;
+  meta.src_mac = 0;
+  meta.ethertype = 0;
+  meta.payload_len = 0;
 
   if (frame_start) {
-    // Clear all header state at the first nibble of a new RX frame.
     rx_state = RX_SEARCH;
     rx_preamble_count = 0;
     rx_byte_index = 0;
     rx_frame_error = false;
-    rx_dest_broadcast = true;
     rx_header.dst_mac = 0;
     rx_header.src_mac = 0;
     rx_header.ethertype = 0;
+    rx_fcs_tail_count = 0;
+    rx_payload_count = 0;
+    rx_truncated = false;
   }
 
   rx_frame_error = rx_frame_error || (eth_rxerr != 0);
@@ -53,8 +80,6 @@ static void ethernet_rx_parser_step(bool frame_start, bool byte_valid,
     bool process_data_byte = false;
 
     if (rx_state == RX_SEARCH) {
-      // Ignore 0x55 preamble bytes until SFD. If no preamble is present,
-      // treat the first non-preamble byte as destination MAC byte 0.
       if (data_byte == 0x55) {
         if (rx_preamble_count != 15) {
           rx_preamble_count++;
@@ -71,32 +96,24 @@ static void ethernet_rx_parser_step(bool frame_start, bool byte_valid,
     }
 
     if (process_data_byte) {
-      // Capture the Ethernet header byte-by-byte. Later payload/FCS bytes
-      // are ignored for now because RX payload buffering is deferred.
       switch ((unsigned)rx_byte_index) {
       case 0:
         rx_header.dst_mac.range(47, 40) = data_byte;
-        rx_dest_broadcast = (data_byte == 0xff);
         break;
       case 1:
         rx_header.dst_mac.range(39, 32) = data_byte;
-        rx_dest_broadcast = rx_dest_broadcast && (data_byte == 0xff);
         break;
       case 2:
         rx_header.dst_mac.range(31, 24) = data_byte;
-        rx_dest_broadcast = rx_dest_broadcast && (data_byte == 0xff);
         break;
       case 3:
         rx_header.dst_mac.range(23, 16) = data_byte;
-        rx_dest_broadcast = rx_dest_broadcast && (data_byte == 0xff);
         break;
       case 4:
         rx_header.dst_mac.range(15, 8) = data_byte;
-        rx_dest_broadcast = rx_dest_broadcast && (data_byte == 0xff);
         break;
       case 5:
         rx_header.dst_mac.range(7, 0) = data_byte;
-        rx_dest_broadcast = rx_dest_broadcast && (data_byte == 0xff);
         break;
       case 6:
         rx_header.src_mac.range(47, 40) = data_byte;
@@ -123,6 +140,9 @@ static void ethernet_rx_parser_step(bool frame_start, bool byte_valid,
         rx_header.ethertype.range(7, 0) = data_byte;
         break;
       default:
+        rx_capture_payload_byte(rx_payload_buf, data_byte, rx_fcs_tail,
+                                rx_fcs_tail_count, rx_payload_count,
+                                rx_truncated);
         break;
       }
       rx_byte_index++;
@@ -130,21 +150,21 @@ static void ethernet_rx_parser_step(bool frame_start, bool byte_valid,
   }
 
   if (frame_end) {
-    // Produce one metadata event at end-of-frame. eth_rxerr and header
-    // checks decide whether higher-level logic should respond.
-    bool dest_ok = (rx_header.dst_mac == FPGA_MAC) || rx_dest_broadcast;
-    bool ethertype_ok = (rx_header.ethertype == CUSTOM_ETHERTYPE);
-    event.valid = (rx_byte_index >= ETH_HEADER_BYTES);
-    event.dst_mac = rx_header.dst_mac;
-    event.src_mac = rx_header.src_mac;
-    event.ethertype = rx_header.ethertype;
-    event.accepted = event.valid && !rx_frame_error && dest_ok && ethertype_ok;
+    meta.valid = (rx_byte_index >= ETH_HEADER_BYTES + 4) &&
+                 (rx_fcs_tail_count == 4) && !rx_frame_error;
+    meta.truncated = rx_truncated;
+    meta.dst_mac = rx_header.dst_mac;
+    meta.src_mac = rx_header.src_mac;
+    meta.ethertype = rx_header.ethertype;
+    meta.payload_len = rx_payload_count;
 
     rx_state = RX_SEARCH;
     rx_preamble_count = 0;
     rx_byte_index = 0;
     rx_frame_error = false;
-    rx_dest_broadcast = true;
+    rx_fcs_tail_count = 0;
+    rx_payload_count = 0;
+    rx_truncated = false;
   }
 }
 
