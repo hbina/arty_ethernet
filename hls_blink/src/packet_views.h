@@ -17,23 +17,6 @@ struct EthernetFrameMeta {
   ap_uint<48> src_mac;
   ap_uint<16> ethertype;
   ap_uint<11> payload_len;
-  ap_uint<16> arp_hw_type;
-  ap_uint<16> arp_proto_type;
-  ap_uint<8> arp_hw_len;
-  ap_uint<8> arp_proto_len;
-  ap_uint<16> arp_opcode;
-  ap_uint<48> arp_sender_mac;
-  ap_uint<32> arp_sender_ip;
-  ap_uint<32> arp_target_ip;
-  ap_uint<8> ipv4_version_ihl;
-  ap_uint<16> ipv4_total_len;
-  ap_uint<16> ipv4_flags_fragment;
-  ap_uint<8> ipv4_protocol;
-  ap_uint<32> ipv4_src_ip;
-  ap_uint<32> ipv4_dst_ip;
-  ap_uint<16> udp_src_port;
-  ap_uint<16> udp_dst_port;
-  ap_uint<16> udp_len;
 };
 
 struct Ipv4View {

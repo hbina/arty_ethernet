@@ -53,23 +53,6 @@ ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
   static ap_uint<3> rx_fcs_tail_count = 0;
   static ap_uint<11> rx_payload_count = 0;
   static bool rx_truncated = false;
-  static ap_uint<16> rx_arp_hw_type = 0;
-  static ap_uint<16> rx_arp_proto_type = 0;
-  static ap_uint<8> rx_arp_hw_len = 0;
-  static ap_uint<8> rx_arp_proto_len = 0;
-  static ap_uint<16> rx_arp_opcode = 0;
-  static ap_uint<48> rx_arp_sender_mac = 0;
-  static ap_uint<32> rx_arp_sender_ip = 0;
-  static ap_uint<32> rx_arp_target_ip = 0;
-  static ap_uint<8> rx_ipv4_version_ihl = 0;
-  static ap_uint<16> rx_ipv4_total_len = 0;
-  static ap_uint<16> rx_ipv4_flags_fragment = 0;
-  static ap_uint<8> rx_ipv4_protocol = 0;
-  static ap_uint<32> rx_ipv4_src_ip = 0;
-  static ap_uint<32> rx_ipv4_dst_ip = 0;
-  static ap_uint<16> rx_udp_src_port = 0;
-  static ap_uint<16> rx_udp_dst_port = 0;
-  static ap_uint<16> rx_udp_len = 0;
 
   meta.valid = false;
   meta.truncated = false;
@@ -77,23 +60,6 @@ ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
   meta.src_mac = 0;
   meta.ethertype = 0;
   meta.payload_len = 0;
-  meta.arp_hw_type = 0;
-  meta.arp_proto_type = 0;
-  meta.arp_hw_len = 0;
-  meta.arp_proto_len = 0;
-  meta.arp_opcode = 0;
-  meta.arp_sender_mac = 0;
-  meta.arp_sender_ip = 0;
-  meta.arp_target_ip = 0;
-  meta.ipv4_version_ihl = 0;
-  meta.ipv4_total_len = 0;
-  meta.ipv4_flags_fragment = 0;
-  meta.ipv4_protocol = 0;
-  meta.ipv4_src_ip = 0;
-  meta.ipv4_dst_ip = 0;
-  meta.udp_src_port = 0;
-  meta.udp_dst_port = 0;
-  meta.udp_len = 0;
 
   if (frame_start) {
     rx_state = RX_SEARCH;
@@ -106,23 +72,6 @@ ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
     rx_fcs_tail_count = 0;
     rx_payload_count = 0;
     rx_truncated = false;
-    rx_arp_hw_type = 0;
-    rx_arp_proto_type = 0;
-    rx_arp_hw_len = 0;
-    rx_arp_proto_len = 0;
-    rx_arp_opcode = 0;
-    rx_arp_sender_mac = 0;
-    rx_arp_sender_ip = 0;
-    rx_arp_target_ip = 0;
-    rx_ipv4_version_ihl = 0;
-    rx_ipv4_total_len = 0;
-    rx_ipv4_flags_fragment = 0;
-    rx_ipv4_protocol = 0;
-    rx_ipv4_src_ip = 0;
-    rx_ipv4_dst_ip = 0;
-    rx_udp_src_port = 0;
-    rx_udp_dst_port = 0;
-    rx_udp_len = 0;
   }
 
   rx_frame_error = rx_frame_error || (eth_rxerr != 0);
@@ -191,109 +140,6 @@ ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
         rx_header.ethertype.range(7, 0) = data_byte;
         break;
       default:
-        ap_uint<11> payload_index = rx_byte_index - ETH_HEADER_BYTES;
-        switch ((unsigned)payload_index) {
-        case 0:
-          rx_arp_hw_type.range(15, 8) = data_byte;
-          rx_ipv4_version_ihl = data_byte;
-          break;
-        case 1:
-          rx_arp_hw_type.range(7, 0) = data_byte;
-          break;
-        case 2:
-          rx_arp_proto_type.range(15, 8) = data_byte;
-          rx_ipv4_total_len.range(15, 8) = data_byte;
-          break;
-        case 3:
-          rx_arp_proto_type.range(7, 0) = data_byte;
-          rx_ipv4_total_len.range(7, 0) = data_byte;
-          break;
-        case 4:
-          rx_arp_hw_len = data_byte;
-          break;
-        case 5:
-          rx_arp_proto_len = data_byte;
-          break;
-        case 6:
-          rx_arp_opcode.range(15, 8) = data_byte;
-          rx_ipv4_flags_fragment.range(15, 8) = data_byte;
-          break;
-        case 7:
-          rx_arp_opcode.range(7, 0) = data_byte;
-          rx_ipv4_flags_fragment.range(7, 0) = data_byte;
-          break;
-        case 8:
-          rx_arp_sender_mac.range(47, 40) = data_byte;
-          break;
-        case 9:
-          rx_arp_sender_mac.range(39, 32) = data_byte;
-          rx_ipv4_protocol = data_byte;
-          break;
-        case 10:
-          rx_arp_sender_mac.range(31, 24) = data_byte;
-          break;
-        case 11:
-          rx_arp_sender_mac.range(23, 16) = data_byte;
-          break;
-        case 12:
-          rx_arp_sender_mac.range(15, 8) = data_byte;
-          rx_ipv4_src_ip.range(31, 24) = data_byte;
-          break;
-        case 13:
-          rx_arp_sender_mac.range(7, 0) = data_byte;
-          rx_ipv4_src_ip.range(23, 16) = data_byte;
-          break;
-        case 14:
-          rx_arp_sender_ip.range(31, 24) = data_byte;
-          rx_ipv4_src_ip.range(15, 8) = data_byte;
-          break;
-        case 15:
-          rx_arp_sender_ip.range(23, 16) = data_byte;
-          rx_ipv4_src_ip.range(7, 0) = data_byte;
-          break;
-        case 16:
-          rx_arp_sender_ip.range(15, 8) = data_byte;
-          rx_ipv4_dst_ip.range(31, 24) = data_byte;
-          break;
-        case 17:
-          rx_arp_sender_ip.range(7, 0) = data_byte;
-          rx_ipv4_dst_ip.range(23, 16) = data_byte;
-          break;
-        case 18:
-          rx_ipv4_dst_ip.range(15, 8) = data_byte;
-          break;
-        case 19:
-          rx_ipv4_dst_ip.range(7, 0) = data_byte;
-          break;
-        case 20:
-          rx_udp_src_port.range(15, 8) = data_byte;
-          break;
-        case 21:
-          rx_udp_src_port.range(7, 0) = data_byte;
-          break;
-        case 22:
-          rx_udp_dst_port.range(15, 8) = data_byte;
-          break;
-        case 23:
-          rx_udp_dst_port.range(7, 0) = data_byte;
-          break;
-        case 24:
-          rx_arp_target_ip.range(31, 24) = data_byte;
-          rx_udp_len.range(15, 8) = data_byte;
-          break;
-        case 25:
-          rx_arp_target_ip.range(23, 16) = data_byte;
-          rx_udp_len.range(7, 0) = data_byte;
-          break;
-        case 26:
-          rx_arp_target_ip.range(15, 8) = data_byte;
-          break;
-        case 27:
-          rx_arp_target_ip.range(7, 0) = data_byte;
-          break;
-        default:
-          break;
-        }
         rx_capture_payload_byte(rx_payload_buf, data_byte, rx_fcs_tail,
                                 rx_fcs_tail_count, rx_payload_count,
                                 rx_truncated);
@@ -311,23 +157,6 @@ ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
     meta.src_mac = rx_header.src_mac;
     meta.ethertype = rx_header.ethertype;
     meta.payload_len = rx_payload_count;
-    meta.arp_hw_type = rx_arp_hw_type;
-    meta.arp_proto_type = rx_arp_proto_type;
-    meta.arp_hw_len = rx_arp_hw_len;
-    meta.arp_proto_len = rx_arp_proto_len;
-    meta.arp_opcode = rx_arp_opcode;
-    meta.arp_sender_mac = rx_arp_sender_mac;
-    meta.arp_sender_ip = rx_arp_sender_ip;
-    meta.arp_target_ip = rx_arp_target_ip;
-    meta.ipv4_version_ihl = rx_ipv4_version_ihl;
-    meta.ipv4_total_len = rx_ipv4_total_len;
-    meta.ipv4_flags_fragment = rx_ipv4_flags_fragment;
-    meta.ipv4_protocol = rx_ipv4_protocol;
-    meta.ipv4_src_ip = rx_ipv4_src_ip;
-    meta.ipv4_dst_ip = rx_ipv4_dst_ip;
-    meta.udp_src_port = rx_udp_src_port;
-    meta.udp_dst_port = rx_udp_dst_port;
-    meta.udp_len = rx_udp_len;
 
     rx_state = RX_SEARCH;
     rx_preamble_count = 0;
