@@ -63,43 +63,52 @@ module hls_top (
     );
 
     assign eth_rstn = pll_locked;
-    assign eth_tx_en = 1'b0;
-    assign eth_txd = 4'b0000;
 
-    wire [31:0] rx_frame_count_eth;
-    wire [31:0] rx_byte_count_eth;
-    wire        rx_frame_toggle_eth;
-    wire        rx_active_eth;
+    wire endpoint_eth_tx_en;
+    wire [3:0] endpoint_eth_txd;
+    wire       rx_accept_toggle_eth;
+    wire       tx_frame_toggle_eth;
+    wire       rx_active_eth;
+    wire       tx_active_eth;
 
-    mii_rx_monitor mii_rx_monitor_i (
-        .eth_rx_clk(eth_rx_clk),
+    assign eth_tx_en = endpoint_eth_tx_en;
+    assign eth_txd = endpoint_eth_txd;
+
+    ethernet_l2_endpoint_hls ethernet_l2_endpoint_hls_i (
+        .ap_clk(clk25),
+        .ap_rst(~pll_locked),
         .eth_rx_dv(eth_rx_dv),
         .eth_rxd(eth_rxd),
         .eth_rxerr(eth_rxerr),
-        .frame_count(rx_frame_count_eth),
-        .byte_count(rx_byte_count_eth),
-        .frame_toggle(rx_frame_toggle_eth),
-        .rx_active(rx_active_eth)
+        .eth_tx_en(endpoint_eth_tx_en),
+        .eth_txd(endpoint_eth_txd),
+        .rx_accept_toggle(rx_accept_toggle_eth),
+        .tx_frame_toggle(tx_frame_toggle_eth),
+        .rx_active(rx_active_eth),
+        .tx_active(tx_active_eth)
     );
 
-    reg [2:0]  frame_toggle_sync = 3'b000;
-    reg [1:0] rx_active_sync = 2'b00;
-    wire       frame_event_sys;
+    reg [2:0] rx_accept_toggle_sync = 3'b000;
+    reg [2:0] tx_frame_toggle_sync = 3'b000;
+    reg [1:0] activity_sync = 2'b00;
+    wire      frame_event_sys;
 
-    assign frame_event_sys = frame_toggle_sync[2] ^ frame_toggle_sync[1];
+    assign frame_event_sys = (rx_accept_toggle_sync[2] ^ rx_accept_toggle_sync[1]) |
+                             (tx_frame_toggle_sync[2] ^ tx_frame_toggle_sync[1]);
 
     always @(posedge CLK100MHZ) begin
-        frame_toggle_sync <= {frame_toggle_sync[1:0], rx_frame_toggle_eth};
-        rx_active_sync <= {rx_active_sync[0], rx_active_eth};
+        rx_accept_toggle_sync <= {rx_accept_toggle_sync[1:0], rx_accept_toggle_eth};
+        tx_frame_toggle_sync <= {tx_frame_toggle_sync[1:0], tx_frame_toggle_eth};
+        activity_sync <= {activity_sync[0], rx_active_eth | tx_active_eth};
     end
 
     blink_hls blink_hls_i (
         .ap_clk(CLK100MHZ),
         .ap_rst(1'b0),
         .frame_event(frame_event_sys),
-        .rx_active(rx_active_sync[1]),
+        .rx_active(activity_sync[1]),
         .led(led)
     );
 
-    wire unused_rx_byte_count = ^rx_byte_count_eth;
+    wire unused_eth_rx_clk = eth_rx_clk;
 endmodule
