@@ -32,6 +32,23 @@ make hls-bit
 make program-vivado HW_PORT=3124
 ```
 
+Formatting commands:
+
+```sh
+make check-format
+make format
+```
+
+Run `make check-format` before finishing code changes. If formatting fails, run `make format`, review the resulting diff, then rerun `make check-format`.
+
+For large behavioral changes, run the board integration test after the HLS/build checks:
+
+```sh
+make install-test-board HW_PORT=3124
+```
+
+Use a different `HW_PORT` when a port is already bound.
+
 Primary source files:
 
 ```text

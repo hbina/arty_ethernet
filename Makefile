@@ -19,6 +19,18 @@ PART ?= xc7a100ticsg324-1L
 .PHONY: bit program list-targets hw-server vpp-version clean probe-board program-vivado
 .PHONY: hls hls-bit hls-program
 .PHONY: test-hw install-test-board
+.PHONY: format check-format install-hooks
+
+FORMAT_FILES := $(shell find hls_blink/src hls_blink/tb -name "*.cpp" -o -name "*.h" -o -name "*.hpp")
+
+format:
+	clang-format -i $(FORMAT_FILES)
+
+check-format:
+	clang-format --dry-run --Werror $(FORMAT_FILES)
+
+install-hooks:
+	ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
 
 bit:
 	PART=$(PART) $(VIVADO) -mode batch -source scripts/build_bitstream.tcl
