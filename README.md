@@ -19,10 +19,11 @@ xc7a100ticsg324-1L
 The primary flow is Vitis HLS:
 
 1. `hls_blink/src/blink_hls.cpp` is C++ using `ap_uint`.
-2. Vitis HLS synthesizes that C++ into Verilog RTL.
-3. `hls_blink/src/hls_top.v` wraps the HLS block for the Arty clock and LEDs.
-4. Vivado places/routes the generated RTL and writes a bitstream.
-5. Vivado Hardware Manager or XSCT programs the FPGA over USB-JTAG.
+2. `hls_blink/src/ethernet_l2_endpoint_hls.cpp` is a custom Layer-2 Ethernet endpoint in C++.
+3. Vitis HLS synthesizes those C++ blocks into Verilog RTL.
+4. `hls_blink/src/hls_top.v` wraps the HLS blocks for the Arty clock, Ethernet pins, and LEDs.
+5. Vivado places/routes the generated RTL and writes a bitstream.
+6. Vivado Hardware Manager or XSCT programs the FPGA over USB-JTAG.
 
 This is not a MicroBlaze design. There is no soft CPU and no firmware ELF. The C++ becomes hardware.
 
@@ -30,11 +31,14 @@ This is not a MicroBlaze design. There is no soft CPU and no firmware ELF. The C
 
 ```text
 hls_blink/src/blink_hls.cpp        HLS C++ top function
-hls_blink/src/blink_hls_tb.cpp     C simulation testbench
+hls_blink/src/ethernet_l2_endpoint_hls.cpp
 hls_blink/src/hls_top.v            Small Verilog wrapper around HLS RTL
+hls_blink/tb/blink_hls_tb.cpp      C simulation testbench
+hls_blink/tb/ethernet_l2_endpoint_hls_tb.cpp
 hls_blink/scripts/run_hls.tcl      Vitis HLS batch script
 hls_blink/scripts/build_hls_bitstream.tcl
 constraints/arty_a7.xdc            Arty A7 100 MHz clock and LED pins
+scripts/send_broadcast_eth.py      Raw custom EtherType send/listen utility
 scripts/probe_vivado_hw.tcl        Discover connected JTAG hardware
 scripts/program_vivado_hw.tcl      Program verified xc7a100t target
 Makefile                           Command wrappers
@@ -50,13 +54,14 @@ Makefile                           Command wrappers
 ├── constraints/
 ├── hls_blink/
 │   ├── scripts/
-│   └── src/
+│   ├── src/
+│   └── tb/
 ├── rtl/
 ├── scripts/
 └── build/                         Generated, ignored
 ```
 
-`hls_blink/` is the main design area. The `src/` directory contains the HLS C++ source, the C simulation testbench, and the small Verilog wrapper used to connect the generated HLS module to the Arty clock and LED pins. The `scripts/` directory inside `hls_blink/` contains the HLS and Vivado build scripts for this design.
+`hls_blink/` is the main design area. The `src/` directory contains synthesizable HLS C++ source and the small Verilog wrapper used to connect the generated HLS modules to the Arty clock, Ethernet pins, and LEDs. The `tb/` directory contains C simulation testbenches with `main()` functions. The `scripts/` directory inside `hls_blink/` contains the HLS and Vivado build scripts for this design.
 
 `constraints/` contains board-level XDC constraints. These are shared by both the HLS build and the older RTL-only blink flow.
 
@@ -110,6 +115,28 @@ The generated bitstream is:
 
 ```text
 hls_blink/build/hls_blink.bit
+```
+
+## Custom Ethernet Layer-2 Endpoint
+
+The bitstream includes a minimal custom Ethernet endpoint with no MicroBlaze, lwIP, IP, ARP, DHCP, UDP, or TCP. The FPGA MAC address is:
+
+```text
+02:00:00:00:00:01
+```
+
+It uses EtherType `0x88B5`, periodically transmits a broadcast `ARTY_BEACON` payload, and replies to valid unicast or broadcast custom frames with `ARTY_ACK`. Frames are padded to the Ethernet minimum payload length and include preamble, SFD, and FCS from the FPGA TX path.
+
+On a Linux host connected through `eno1`, listen for beacons and send a test frame:
+
+```sh
+sudo scripts/send_broadcast_eth.py eno1 --listen --message ping
+```
+
+Send a broadcast custom frame instead:
+
+```sh
+sudo scripts/send_broadcast_eth.py eno1 --broadcast --listen --message ping
 ```
 
 For an Arty A7-35T instead:

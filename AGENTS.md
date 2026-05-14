@@ -22,6 +22,8 @@ Use a different `HW_PORT` when a port is already bound.
 
 The requested flow is Vitis HLS C++ to RTL. Do not convert this into a MicroBlaze/software project unless explicitly asked.
 
+Always prefer implementing new FPGA behavior in C++ for Vitis HLS. Use handwritten Verilog only for thin top-level wrappers, board/clock/reset plumbing, or cases where HLS C++ is demonstrably unsuitable and the reason is documented. If a feature can reasonably be expressed in HLS C++, put synthesizable source under `hls_blink/src/`, put C simulation testbenches under `hls_blink/tb/`, and wire the generated RTL into the existing Vivado flow.
+
 Primary commands:
 
 ```sh
@@ -34,8 +36,9 @@ Primary source files:
 
 ```text
 hls_blink/src/blink_hls.cpp
-hls_blink/src/blink_hls_tb.cpp
+hls_blink/src/*_hls.cpp
 hls_blink/src/hls_top.v
+hls_blink/tb/*_tb.cpp
 hls_blink/scripts/run_hls.tcl
 hls_blink/scripts/build_hls_bitstream.tcl
 constraints/arty_a7.xdc
