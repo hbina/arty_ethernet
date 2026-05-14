@@ -30,6 +30,7 @@ puts "HLS IP:  [file join $out_dir blink_hls_project solution1 impl ip]"
 open_project -reset ethernet_l2_endpoint_hls_project
 set_top ethernet_l2_endpoint_hls
 add_files [file join $flow_dir src ethernet_l2_endpoint_hls.cpp]
+add_files -tb [file join $flow_dir tb ethernet_l2_endpoint_hls_test_frame.cpp]
 add_files -tb [file join $flow_dir tb ethernet_l2_endpoint_hls_tb.cpp]
 
 open_solution -reset solution1 -flow_target vivado
