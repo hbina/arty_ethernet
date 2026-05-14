@@ -111,6 +111,10 @@ static uint32_t read_le32(const std::vector<uint8_t> &frame, unsigned index) {
          ((uint32_t)frame[index + 3] << 24);
 }
 
+static uint16_t read_be16(const std::vector<uint8_t> &frame, unsigned index) {
+  return ((uint16_t)frame[index] << 8) | frame[index + 1];
+}
+
 static void append_eth_fcs(std::vector<uint8_t> &frame) {
   unsigned eth =
       (frame.size() >= 8 && frame[0] == 0x55 && frame[7] == 0xd5) ? 8 : 0;
@@ -119,6 +123,27 @@ static void append_eth_fcs(std::vector<uint8_t> &frame) {
   frame.push_back((uint8_t)((fcs >> 8) & 0xff));
   frame.push_back((uint8_t)((fcs >> 16) & 0xff));
   frame.push_back((uint8_t)((fcs >> 24) & 0xff));
+}
+
+static uint16_t ipv4_header_checksum(const std::vector<uint8_t> &frame,
+                                     unsigned ip) {
+  uint32_t sum = 0;
+  for (unsigned i = 0; i < 20; i += 2) {
+    if (i != 10) {
+      sum += read_be16(frame, ip + i);
+    }
+  }
+  while (sum >> 16) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  return (uint16_t)~sum;
+}
+
+static void append_ipv4_header_checksum(std::vector<uint8_t> &frame,
+                                        unsigned ip) {
+  uint16_t checksum = ipv4_header_checksum(frame, ip);
+  frame[ip + 10] = (uint8_t)(checksum >> 8);
+  frame[ip + 11] = (uint8_t)checksum;
 }
 
 static void assert_fcs(const std::vector<uint8_t> &frame, unsigned eth,
@@ -130,6 +155,35 @@ static void assert_fcs(const std::vector<uint8_t> &frame, unsigned eth,
                  actual_fcs);
   }
   assert(actual_fcs == expected_fcs);
+}
+
+static std::vector<uint8_t> udp_request_frame(
+    const std::vector<uint8_t> &dst, const std::vector<uint8_t> &src,
+    const std::vector<uint8_t> &src_ip, const std::vector<uint8_t> &dst_ip,
+    uint16_t src_port, uint16_t dst_port, uint16_t flags_fragment) {
+  std::vector<uint8_t> frame = {0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5};
+  frame.insert(frame.end(), dst.begin(), dst.end());
+  frame.insert(frame.end(), src.begin(), src.end());
+  frame.push_back(0x08);
+  frame.push_back(0x00);
+
+  const unsigned ip = frame.size();
+  frame.insert(frame.end(), {0x45, 0x00, 0x00, 0x24, 0x12, 0x34});
+  frame.push_back((uint8_t)(flags_fragment >> 8));
+  frame.push_back((uint8_t)flags_fragment);
+  frame.insert(frame.end(), {0x40, 0x11, 0x00, 0x00});
+  frame.insert(frame.end(), src_ip.begin(), src_ip.end());
+  frame.insert(frame.end(), dst_ip.begin(), dst_ip.end());
+  append_ipv4_header_checksum(frame, ip);
+
+  frame.push_back((uint8_t)(src_port >> 8));
+  frame.push_back((uint8_t)src_port);
+  frame.push_back((uint8_t)(dst_port >> 8));
+  frame.push_back((uint8_t)dst_port);
+  frame.insert(frame.end(), {0x00, 0x10, 0x00, 0x00});
+  frame.insert(frame.end(), {'h', 'e', 'l', 'l', 'o', '!', 0x00, 0x01});
+  append_eth_fcs(frame);
+  return frame;
 }
 
 static void assert_valid_tx_frame(const std::vector<uint8_t> &frame,
@@ -160,6 +214,65 @@ static void assert_valid_tx_frame(const std::vector<uint8_t> &frame,
     assert(frame[eth + 14 + i] == payload[i]);
   }
   for (unsigned i = payload.size(); i < 46; ++i) {
+    assert(frame[eth + 14 + i] == 0x00);
+  }
+
+  assert_fcs(frame, eth, body_len);
+}
+
+static void assert_valid_udp_reply(const std::vector<uint8_t> &frame,
+                                   const std::vector<uint8_t> &requester_mac,
+                                   const std::vector<uint8_t> &requester_ip,
+                                   uint16_t requester_port) {
+  const unsigned body_len = 14 + 46;
+  if (frame.size() != 8 + body_len + 4) {
+    std::fprintf(stderr, "bad UDP frame size: expected %u got %u\n",
+                 8 + body_len + 4, (unsigned)frame.size());
+  }
+  assert(frame.size() == 8 + body_len + 4);
+
+  for (int i = 0; i < 7; ++i) {
+    assert(frame[i] == 0x55);
+  }
+  assert(frame[7] == 0xd5);
+
+  const unsigned eth = 8;
+  for (unsigned i = 0; i < 6; ++i) {
+    assert(frame[eth + i] == requester_mac[i]);
+  }
+
+  const uint8_t fpga_mac[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+  for (unsigned i = 0; i < 6; ++i) {
+    assert(frame[eth + 6 + i] == fpga_mac[i]);
+  }
+  assert(frame[eth + 12] == 0x08);
+  assert(frame[eth + 13] == 0x00);
+
+  const unsigned ip = eth + 14;
+  assert(frame[ip + 0] == 0x45);
+  assert(read_be16(frame, ip + 2) == 36);
+  assert(read_be16(frame, ip + 6) == 0);
+  assert(frame[ip + 8] == 64);
+  assert(frame[ip + 9] == 17);
+  assert(read_be16(frame, ip + 10) == ipv4_header_checksum(frame, ip));
+  assert(frame[ip + 12] == 192);
+  assert(frame[ip + 13] == 168);
+  assert(frame[ip + 14] == 1);
+  assert(frame[ip + 15] == 50);
+  for (unsigned i = 0; i < 4; ++i) {
+    assert(frame[ip + 16 + i] == requester_ip[i]);
+  }
+
+  const unsigned udp = ip + 20;
+  assert(read_be16(frame, udp + 0) == 1234);
+  assert(read_be16(frame, udp + 2) == requester_port);
+  assert(read_be16(frame, udp + 4) == 16);
+  assert(read_be16(frame, udp + 6) == 0);
+  const uint8_t ack[] = {'A', 'R', 'T', 'Y', '_', 'A', 'C', 'K'};
+  for (unsigned i = 0; i < 8; ++i) {
+    assert(frame[udp + 8 + i] == ack[i]);
+  }
+  for (unsigned i = 36; i < 46; ++i) {
     assert(frame[eth + 14 + i] == 0x00);
   }
 
@@ -348,6 +461,7 @@ static void test_ipv4_view() {
   assert(ipv4.header_len == 5);
   assert(ipv4.total_len == 20);
   assert(ipv4.protocol == 0x11);
+  assert(ipv4.flags_fragment == 0);
   assert(ipv4.src_ip == 0xc0a8010a);
   assert(ipv4.dst_ip == 0xc0a80132);
   assert(ipv4.payload_view.offset == 20);
@@ -366,6 +480,34 @@ static void test_ipv4_view() {
 
   payload[3] = 0x15;
   assert(!parse_ipv4_view(payload, view).valid);
+}
+
+static void test_udp_view() {
+  ap_uint<8> payload[MAX_ETH_PAYLOAD_BYTES_INT];
+  for (unsigned i = 0; i < MAX_ETH_PAYLOAD_BYTES_INT; ++i) {
+    payload[i] = 0;
+  }
+
+  payload[0] = 0x12;
+  payload[1] = 0x34;
+  payload[2] = 0x04;
+  payload[3] = 0xd2;
+  payload[4] = 0x00;
+  payload[5] = 0x10;
+  PacketView view = {0, 16};
+  UdpView udp = parse_udp_view(payload, view);
+  assert(udp.valid);
+  assert(udp.src_port == 0x1234);
+  assert(udp.dst_port == 1234);
+  assert(udp.length == 16);
+  assert(udp.payload_view.offset == 8);
+  assert(udp.payload_view.len == 8);
+
+  payload[5] = 0x07;
+  assert(!parse_udp_view(payload, view).valid);
+
+  payload[5] = 0x11;
+  assert(!parse_udp_view(payload, view).valid);
 }
 
 int main() {
@@ -428,6 +570,24 @@ int main() {
                                   host_mac, host_ip, other_ip));
   assert_no_tx_frame(768);
 
+  send_rx_frame(udp_request_frame({0x02, 0x00, 0x00, 0x00, 0x00, 0x01},
+                                  host_mac, host_ip, fpga_ip, 49152, 1234, 0));
+  std::vector<uint8_t> udp_reply = collect_tx_frame(1024);
+  assert_valid_udp_reply(udp_reply, host_mac, host_ip, 49152);
+
+  send_rx_frame(udp_request_frame({0x02, 0x00, 0x00, 0x00, 0x00, 0x01},
+                                  host_mac, host_ip, other_ip, 49152, 1234, 0));
+  assert_no_tx_frame(768);
+
+  send_rx_frame(udp_request_frame({0x02, 0x00, 0x00, 0x00, 0x00, 0x01},
+                                  host_mac, host_ip, fpga_ip, 49152, 4321, 0));
+  assert_no_tx_frame(768);
+
+  send_rx_frame(udp_request_frame({0x02, 0x00, 0x00, 0x00, 0x00, 0x01},
+                                  host_mac, host_ip, fpga_ip, 49152, 1234,
+                                  0x2000));
+  assert_no_tx_frame(768);
+
   assert_valid_test_frame(collect_test_frame(0, 256), 0);
   assert_valid_test_frame(collect_test_frame(8, 256), 8);
   assert_valid_test_frame(collect_test_frame(47, 256), 47);
@@ -435,6 +595,7 @@ int main() {
   test_rx_capture_strips_fcs();
   test_rx_oversized_payload_truncated();
   test_ipv4_view();
+  test_udp_view();
 
   return 0;
 }
