@@ -43,6 +43,8 @@ csim.exe
 
 # Local editor/OS files
 __pycache__/
+.pytest_cache/
+.venv/
 *~
 .DS_Store
 .vscode/

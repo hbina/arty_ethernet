@@ -188,6 +188,103 @@ less hls_blink/build/timing_summary.rpt
 less hls_blink/build/utilization.rpt
 ```
 
+To verify the programmed custom Layer-2 Ethernet endpoint from Linux, run the
+pytest hardware suite on the host interface connected to the Arty Ethernet port:
+
+```sh
+python3 -m pytest tests/hw --iface eno1
+```
+
+To build the latest HLS bitstream, program the verified `xc7a100t` target through
+Vivado Hardware Manager, and then run the same raw-frame assertions:
+
+```sh
+python3 -m pytest tests/hw --iface eno1 --program --hw-port 3124
+```
+
+This full install/test path rebuilds the HLS bitstream. If the board is already
+programmed, skip build/programming and only run the raw Ethernet assertions:
+
+```sh
+make test-hw
+```
+
+The tests use raw `AF_PACKET` Ethernet sockets. On Linux, the process running
+pytest therefore needs `CAP_NET_RAW`. This is a kernel permission; membership in
+a normal Unix group is not enough by itself.
+
+First install pytest. On Debian/Ubuntu, the simplest system-wide option is:
+
+```sh
+sudo apt install python3-pytest
+```
+
+Or install it into a Python virtual environment:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install pytest
+```
+
+Then choose one of these permission setups.
+
+Option 1: run pytest with sudo:
+
+```sh
+sudo python3 -m pytest tests/hw --iface eno1
+sudo python3 -m pytest tests/hw --iface eno1 --program --hw-port 3124
+```
+
+If pytest is installed only in a virtual environment, run that interpreter
+through sudo instead:
+
+```sh
+sudo .venv/bin/python -m pytest tests/hw --iface eno1
+sudo .venv/bin/python -m pytest tests/hw --iface eno1 --program --hw-port 3124
+```
+
+Option 2: for a shared lab machine, create one dedicated hardware-test Python
+that only approved users can execute:
+
+```sh
+sudo groupadd --system arty-hw
+sudo usermod -aG arty-hw "$USER"
+sudo python3 -m venv --copies /opt/arty-hw-test
+sudo /opt/arty-hw-test/bin/python -m pip install pytest
+sudo chgrp -R arty-hw /opt/arty-hw-test
+sudo chmod -R o-rwx /opt/arty-hw-test
+sudo setcap cap_net_raw+ep /opt/arty-hw-test/bin/python3
+getcap /opt/arty-hw-test/bin/python3
+```
+
+Log out and back in so the new group membership takes effect. After that,
+approved users can run:
+
+```sh
+make test-hw PYTHON=/opt/arty-hw-test/bin/python
+make install-test-board PYTHON=/opt/arty-hw-test/bin/python
+```
+
+Option 3: for a personal checkout, allow that specific Python interpreter to
+open raw sockets:
+
+```sh
+sudo setcap cap_net_raw+ep "$(readlink -f .venv/bin/python)"
+getcap "$(readlink -f .venv/bin/python)"
+```
+
+After that, no sudo is needed:
+
+```sh
+make test-hw PYTHON=.venv/bin/python
+make install-test-board PYTHON=.venv/bin/python
+```
+
+For a different machine, pass whichever interpreter will run pytest as `PYTHON=...`.
+For example, a system Python setup could use `PYTHON=/usr/local/bin/python3`.
+Avoid setting `CAP_NET_RAW` on a broad system interpreter such as
+`/usr/bin/python3` unless that is acceptable for that host.
+
 ## Clean
 
 ```sh
