@@ -24,22 +24,25 @@ static ap_uint<8> mac_byte(ap_uint<48> mac, ap_uint<3> index) {
   }
 }
 
-static ap_uint<16> read_be16(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
-                             ap_uint<11> index) {
+static ap_uint<16> read_be16(
+    const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<11> index) {
 #pragma HLS INLINE
   return (ap_uint<16>(bytes[index]) << 8) | bytes[index + 1];
 }
 
-static ap_uint<32> read_be32(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
-                             ap_uint<11> index) {
+static ap_uint<32> read_be32(
+    const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<11> index) {
 #pragma HLS INLINE
   return (ap_uint<32>(bytes[index]) << 24) |
          (ap_uint<32>(bytes[index + 1]) << 16) |
          (ap_uint<32>(bytes[index + 2]) << 8) | bytes[index + 3];
 }
 
-static ap_uint<48> read_mac48(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
-                              ap_uint<11> index) {
+static ap_uint<48> read_mac48(
+    const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<11> index) {
 #pragma HLS INLINE
   return (ap_uint<48>(bytes[index]) << 40) |
          (ap_uint<48>(bytes[index + 1]) << 32) |

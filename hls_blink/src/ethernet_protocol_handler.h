@@ -15,10 +15,14 @@ enum ProtocolState {
 };
 
 static void start_protocol_tx_request(
-    const TxRequest &request, bool tx_valid[TX_PACKET_SLOTS],
-    ap_uint<2> tx_write_idx, bool &preparing_payload,
-    TxRequest &prepare_request, ap_uint<6> &prepare_index,
-    ap_uint<2> &prepare_tx_idx, ap_uint<32> &tx_drop_count) {
+    const TxRequest &request,
+    bool tx_valid[TX_PACKET_SLOTS],
+    ap_uint<2> tx_write_idx,
+    bool &preparing_payload,
+    TxRequest &prepare_request,
+    ap_uint<6> &prepare_index,
+    ap_uint<2> &prepare_tx_idx,
+    ap_uint<32> &tx_drop_count) {
 #pragma HLS INLINE
   unsigned write_idx_int = tx_write_idx;
 
@@ -41,20 +45,31 @@ static void start_protocol_tx_request(
 static void protocol_queue_step(
     EthHeader rx_headers[RX_PACKET_SLOTS],
     ap_uint<11> rx_payload_lens[RX_PACKET_SLOTS],
-    bool rx_valid[RX_PACKET_SLOTS], bool rx_truncated[RX_PACKET_SLOTS],
+    bool rx_valid[RX_PACKET_SLOTS],
+    bool rx_truncated[RX_PACKET_SLOTS],
     ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<3> &rx_read_idx, EthHeader tx_headers[TX_PACKET_SLOTS],
+    ap_uint<3> &rx_read_idx,
+    EthHeader tx_headers[TX_PACKET_SLOTS],
     ap_uint<11> tx_payload_lens[TX_PACKET_SLOTS],
     bool tx_valid[TX_PACKET_SLOTS],
     ap_uint<8> tx_payloads[TX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<2> &tx_write_idx, ap_uint<32> &tx_drop_count,
+    ap_uint<2> &tx_write_idx,
+    ap_uint<32> &tx_drop_count,
     ap_uint<1> &rx_accept_toggle) {
 #pragma HLS INLINE
   static ap_uint<32> beacon_count = BEACON_INTERVAL_CYCLES - 4;
   static ProtocolState protocol_state = PROTO_IDLE;
   static bool preparing_payload = false;
   static TxRequest prepare_request = {
-      false, {0, FPGA_MAC, CUSTOM_ETHERTYPE}, 0, TX_REQ_NONE, 0, 0, 0, 0};
+      false,
+      {0, FPGA_MAC, CUSTOM_ETHERTYPE},
+      0,
+      TX_REQ_NONE,
+      0,
+      0,
+      0,
+      0,
+  };
   static ap_uint<6> prepare_index = 0;
   static ap_uint<2> prepare_tx_idx = 0;
   static ap_uint<32> rx_protocol_drop_count = 0;
@@ -119,11 +134,18 @@ static void protocol_queue_step(
         rx_valid[read_idx_int] = false;
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
-        start_protocol_tx_request(request, tx_valid, tx_write_idx,
-                                  preparing_payload, prepare_request,
-                                  prepare_index, prepare_tx_idx, tx_drop_count);
-      } else if (dest_ok && header.ethertype == ARP_ETHERTYPE &&
-                 payload_len >= ARP_PAYLOAD_BYTES) {
+        start_protocol_tx_request(
+            request,
+            tx_valid,
+            tx_write_idx,
+            preparing_payload,
+            prepare_request,
+            prepare_index,
+            prepare_tx_idx,
+            tx_drop_count);
+      } else if (
+          dest_ok && header.ethertype == ARP_ETHERTYPE &&
+          payload_len >= ARP_PAYLOAD_BYTES) {
         parse_rx_idx = read_idx;
         parse_header = header;
         parse_payload_len = payload_len;
@@ -137,8 +159,9 @@ static void protocol_queue_step(
         parse_arp_sender_ip = 0;
         parse_arp_target_ip = 0;
         protocol_state = PROTO_PARSE_ARP;
-      } else if (dest_ok && header.ethertype == IPV4_ETHERTYPE &&
-                 payload_len >= IPV4_HEADER_BYTES + UDP_HEADER_BYTES) {
+      } else if (
+          dest_ok && header.ethertype == IPV4_ETHERTYPE &&
+          payload_len >= IPV4_HEADER_BYTES + UDP_HEADER_BYTES) {
         parse_rx_idx = read_idx;
         parse_header = header;
         parse_payload_len = payload_len;
@@ -160,9 +183,15 @@ static void protocol_queue_step(
       }
     } else if (beacon_tick) {
       TxRequest request = beacon_request();
-      start_protocol_tx_request(request, tx_valid, tx_write_idx,
-                                preparing_payload, prepare_request,
-                                prepare_index, prepare_tx_idx, tx_drop_count);
+      start_protocol_tx_request(
+          request,
+          tx_valid,
+          tx_write_idx,
+          preparing_payload,
+          prepare_request,
+          prepare_index,
+          prepare_tx_idx,
+          tx_drop_count);
     }
   } else if (!preparing_payload && protocol_state == PROTO_PARSE_ARP) {
     unsigned parse_rx_idx_int = parse_rx_idx;
@@ -256,9 +285,15 @@ static void protocol_queue_step(
         request.arp_requester_ip = parse_arp_sender_ip;
         request.udp_requester_ip = 0;
         request.udp_requester_port = 0;
-        start_protocol_tx_request(request, tx_valid, tx_write_idx,
-                                  preparing_payload, prepare_request,
-                                  prepare_index, prepare_tx_idx, tx_drop_count);
+        start_protocol_tx_request(
+            request,
+            tx_valid,
+            tx_write_idx,
+            preparing_payload,
+            prepare_request,
+            prepare_index,
+            prepare_tx_idx,
+            tx_drop_count);
       }
       rx_valid[parse_rx_idx_int] = false;
       rx_truncated[parse_rx_idx_int] = false;
@@ -361,9 +396,15 @@ static void protocol_queue_step(
         request.arp_requester_ip = 0;
         request.udp_requester_ip = parse_ipv4_src_ip;
         request.udp_requester_port = parse_udp_src_port;
-        start_protocol_tx_request(request, tx_valid, tx_write_idx,
-                                  preparing_payload, prepare_request,
-                                  prepare_index, prepare_tx_idx, tx_drop_count);
+        start_protocol_tx_request(
+            request,
+            tx_valid,
+            tx_write_idx,
+            preparing_payload,
+            prepare_request,
+            prepare_index,
+            prepare_tx_idx,
+            tx_drop_count);
       }
       rx_valid[parse_rx_idx_int] = false;
       rx_truncated[parse_rx_idx_int] = false;
@@ -377,8 +418,11 @@ static void protocol_queue_step(
   if (preparing_payload) {
     bool prepare_done = false;
     unsigned prepare_tx_idx_int = prepare_tx_idx;
-    prepare_tx_slot_payload_step(tx_payloads[prepare_tx_idx_int],
-                                 prepare_request, prepare_index, prepare_done);
+    prepare_tx_slot_payload_step(
+        tx_payloads[prepare_tx_idx_int],
+        prepare_request,
+        prepare_index,
+        prepare_done);
     if (prepare_done) {
       tx_headers[prepare_tx_idx_int] = tx_request_header(prepare_request);
       tx_payload_lens[prepare_tx_idx_int] = prepare_request.payload_len;

@@ -9,9 +9,15 @@
 // The function is ap_ctrl_none and pipelined with II=1 so it behaves like
 // always-running hardware rather than a call/return accelerator.
 extern "C" void ethernet_l2_endpoint_hls(
-    ap_uint<1> eth_rx_dv, ap_uint<4> eth_rxd, ap_uint<1> eth_rxerr,
-    ap_uint<1> &eth_tx_en, ap_uint<4> &eth_txd, ap_uint<1> &rx_accept_toggle,
-    ap_uint<1> &tx_frame_toggle, ap_uint<1> &rx_active, ap_uint<1> &tx_active) {
+    ap_uint<1> eth_rx_dv,
+    ap_uint<4> eth_rxd,
+    ap_uint<1> eth_rxerr,
+    ap_uint<1> &eth_tx_en,
+    ap_uint<4> &eth_txd,
+    ap_uint<1> &rx_accept_toggle,
+    ap_uint<1> &tx_frame_toggle,
+    ap_uint<1> &rx_active,
+    ap_uint<1> &tx_active) {
 #pragma HLS INTERFACE ap_none port = eth_rx_dv
 #pragma HLS INTERFACE ap_none port = eth_rxd
 #pragma HLS INTERFACE ap_none port = eth_rxerr
@@ -51,16 +57,42 @@ extern "C" void ethernet_l2_endpoint_hls(
   static ap_uint<2> tx_read_idx = 0;
   static ap_uint<32> tx_drop_count = 0;
 
-  ethernet_rx_queue_step(eth_rx_dv, eth_rxd, eth_rxerr, rx_headers,
-                         rx_payload_lens, rx_valid, rx_truncated, rx_payloads,
-                         rx_write_idx, rx_drop_count, rx_active);
+  ethernet_rx_queue_step(
+      eth_rx_dv,
+      eth_rxd,
+      eth_rxerr,
+      rx_headers,
+      rx_payload_lens,
+      rx_valid,
+      rx_truncated,
+      rx_payloads,
+      rx_write_idx,
+      rx_drop_count,
+      rx_active);
 
-  protocol_queue_step(rx_headers, rx_payload_lens, rx_valid, rx_truncated,
-                      rx_payloads, rx_read_idx, tx_headers, tx_payload_lens,
-                      tx_valid, tx_payloads, tx_write_idx, tx_drop_count,
-                      rx_accept_toggle);
+  protocol_queue_step(
+      rx_headers,
+      rx_payload_lens,
+      rx_valid,
+      rx_truncated,
+      rx_payloads,
+      rx_read_idx,
+      tx_headers,
+      tx_payload_lens,
+      tx_valid,
+      tx_payloads,
+      tx_write_idx,
+      tx_drop_count,
+      rx_accept_toggle);
 
-  ethernet_tx_queue_step(tx_headers, tx_payload_lens, tx_valid, tx_payloads,
-                         tx_read_idx, eth_tx_en, eth_txd, tx_frame_toggle,
-                         tx_active);
+  ethernet_tx_queue_step(
+      tx_headers,
+      tx_payload_lens,
+      tx_valid,
+      tx_payloads,
+      tx_read_idx,
+      eth_tx_en,
+      eth_txd,
+      tx_frame_toggle,
+      tx_active);
 }

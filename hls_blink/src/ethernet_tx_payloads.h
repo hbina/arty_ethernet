@@ -81,9 +81,10 @@ static ap_uint<16> ipv4_reply_checksum(ap_uint<32> dst_ip) {
   return ~sum;
 }
 
-static ap_uint<8> udp_reply_payload_byte(ap_uint<6> index,
-                                         ap_uint<32> requester_ip,
-                                         ap_uint<16> requester_port) {
+static ap_uint<8> udp_reply_payload_byte(
+    ap_uint<6> index,
+    ap_uint<32> requester_ip,
+    ap_uint<16> requester_port) {
 #pragma HLS INLINE
   ap_uint<16> checksum = ipv4_reply_checksum(requester_ip);
 
@@ -187,7 +188,9 @@ static EthHeader tx_request_header(const TxRequest &request) {
 // remain a one-cycle initiation-interval pipeline.
 static void prepare_tx_slot_payload_step(
     ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-    const TxRequest &request, ap_uint<6> payload_index, bool &done) {
+    const TxRequest &request,
+    ap_uint<6> payload_index,
+    bool &done) {
 #pragma HLS INLINE
   TxRequestKind request_kind = request.request_kind;
   ap_uint<11> payload_len = tx_request_payload_len(request_kind);
@@ -197,10 +200,14 @@ static void prepare_tx_slot_payload_step(
     payload_byte = ack_payload_literal_byte(payload_index);
   } else if (request_kind == TX_REQ_ARP_REPLY) {
     payload_byte = arp_reply_payload_byte(
-        payload_index, request.arp_requester_mac, request.arp_requester_ip);
+        payload_index,
+        request.arp_requester_mac,
+        request.arp_requester_ip);
   } else if (request_kind == TX_REQ_UDP_REPLY) {
     payload_byte = udp_reply_payload_byte(
-        payload_index, request.udp_requester_ip, request.udp_requester_port);
+        payload_index,
+        request.udp_requester_ip,
+        request.udp_requester_port);
   }
 
   tx_payload_buf[payload_index] = payload_byte;

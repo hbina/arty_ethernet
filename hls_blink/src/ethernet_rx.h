@@ -7,11 +7,13 @@
 
 enum RxState { RX_SEARCH = 0, RX_DATA = 1 };
 
-static void
-rx_capture_payload_byte(ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-                        ap_uint<8> data_byte, ap_uint<8> rx_fcs_tail[4],
-                        ap_uint<3> &rx_fcs_tail_count,
-                        ap_uint<11> &rx_payload_count, bool &rx_truncated) {
+static void rx_capture_payload_byte(
+    ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<8> data_byte,
+    ap_uint<8> rx_fcs_tail[4],
+    ap_uint<3> &rx_fcs_tail_count,
+    ap_uint<11> &rx_payload_count,
+    bool &rx_truncated) {
 #pragma HLS INLINE
   if (rx_fcs_tail_count < 4) {
     rx_fcs_tail[rx_fcs_tail_count] = data_byte;
@@ -37,11 +39,14 @@ rx_capture_payload_byte(ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
 // The parser skips a standard preamble/SFD if present, records the Ethernet
 // header, buffers up to 1500 payload bytes, and strips the four wire FCS bytes
 // with a tail delay. CRC validation is intentionally out of scope here.
-static void
-ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
-                        bool frame_end, ap_uint<1> eth_rxerr,
-                        ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-                        EthernetFrameMeta &meta) {
+static void ethernet_rx_parser_step(
+    bool frame_start,
+    bool byte_valid,
+    ap_uint<8> data_byte,
+    bool frame_end,
+    ap_uint<1> eth_rxerr,
+    ap_uint<8> rx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+    EthernetFrameMeta &meta) {
 #pragma HLS INLINE
   static RxState rx_state = RX_SEARCH;
   static ap_uint<4> rx_preamble_count = 0;
@@ -140,9 +145,13 @@ ethernet_rx_parser_step(bool frame_start, bool byte_valid, ap_uint<8> data_byte,
         rx_header.ethertype.range(7, 0) = data_byte;
         break;
       default:
-        rx_capture_payload_byte(rx_payload_buf, data_byte, rx_fcs_tail,
-                                rx_fcs_tail_count, rx_payload_count,
-                                rx_truncated);
+        rx_capture_payload_byte(
+            rx_payload_buf,
+            data_byte,
+            rx_fcs_tail,
+            rx_fcs_tail_count,
+            rx_payload_count,
+            rx_truncated);
         break;
       }
       rx_byte_index++;

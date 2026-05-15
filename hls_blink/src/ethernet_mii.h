@@ -7,9 +7,13 @@
 // MII presents each byte as low nibble then high nibble while eth_rx_dv is
 // high. This block also emits one-cycle frame_start/frame_end markers for the
 // parser.
-static void mii_rx_byte_assembler_step(ap_uint<1> eth_rx_dv, ap_uint<4> eth_rxd,
-                                       bool &frame_start, bool &byte_valid,
-                                       ap_uint<8> &data_byte, bool &frame_end) {
+static void mii_rx_byte_assembler_step(
+    ap_uint<1> eth_rx_dv,
+    ap_uint<4> eth_rxd,
+    bool &frame_start,
+    bool &byte_valid,
+    ap_uint<8> &data_byte,
+    bool &frame_end) {
 #pragma HLS INLINE
   static bool rx_in_frame = false;
   static bool rx_have_low = false;
@@ -49,9 +53,12 @@ static void mii_rx_byte_assembler_step(ap_uint<1> eth_rx_dv, ap_uint<4> eth_rxd,
 
 // Emit one byte onto MII TX as two nibbles, low nibble first.
 // byte_done is true on the second nibble cycle, when the caller may advance.
-static void mii_tx_emit_byte_step(ap_uint<8> out_byte, bool &tx_nibble_phase,
-                                  ap_uint<1> &eth_tx_en, ap_uint<4> &eth_txd,
-                                  bool &byte_done) {
+static void mii_tx_emit_byte_step(
+    ap_uint<8> out_byte,
+    bool &tx_nibble_phase,
+    ap_uint<1> &eth_tx_en,
+    ap_uint<4> &eth_txd,
+    bool &byte_done) {
 #pragma HLS INLINE
   eth_tx_en = 1;
   eth_txd = tx_nibble_phase ? out_byte.range(7, 4) : out_byte.range(3, 0);

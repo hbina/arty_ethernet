@@ -32,8 +32,8 @@ static ap_uint<32> crc32_next_byte(ap_uint<32> crc_in, ap_uint<8> data_in) {
 
 // Return one byte of the 14-byte Ethernet header:
 // destination MAC, source MAC, then EtherType.
-static ap_uint<8> ethernet_header_byte(const EthHeader &header,
-                                       ap_uint<4> index) {
+static ap_uint<8>
+ethernet_header_byte(const EthHeader &header, ap_uint<4> index) {
 #pragma HLS INLINE
   if (index < 6) {
     return mac_byte(header.dst_mac, index);
@@ -49,9 +49,10 @@ static ap_uint<8> ethernet_header_byte(const EthHeader &header,
 
 // Read one TX payload byte from BRAM. Bytes past payload_len are zero so the
 // framer can naturally emit Ethernet minimum-frame padding.
-static ap_uint<8>
-tx_payload_byte(ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-                ap_uint<11> index, ap_uint<11> payload_len) {
+static ap_uint<8> tx_payload_byte(
+    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<11> index,
+    ap_uint<11> payload_len) {
 #pragma HLS INLINE
   if (index >= payload_len || index >= MAX_ETH_PAYLOAD_BYTES) {
     return 0;
@@ -61,10 +62,11 @@ tx_payload_byte(ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
 
 // Return one byte of the Ethernet frame body, excluding preamble/SFD and FCS.
 // The body is header first, then payload bytes or zero padding.
-static ap_uint<8>
-ethernet_frame_body_byte(const EthHeader &header,
-                         ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-                         ap_uint<11> payload_len, ap_uint<11> index) {
+static ap_uint<8> ethernet_frame_body_byte(
+    const EthHeader &header,
+    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<11> payload_len,
+    ap_uint<11> index) {
 #pragma HLS INLINE
   if (index < ETH_HEADER_BYTES) {
     return ethernet_header_byte(header, index);
@@ -79,13 +81,16 @@ ethernet_frame_body_byte(const EthHeader &header,
 // header, payload, minimum-frame padding, FCS, and IFG. It is reusable by
 // future ARP/IPv4/UDP/TCP producers because it only depends on metadata +
 // payload RAM.
-static void
-ethernet_tx_framer_step(bool start_request, const EthHeader &start_header,
-                        ap_uint<11> start_payload_len,
-                        ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-                        ap_uint<1> &eth_tx_en, ap_uint<4> &eth_txd,
-                        ap_uint<1> &tx_frame_toggle, ap_uint<1> &tx_active,
-                        bool &tx_idle) {
+static void ethernet_tx_framer_step(
+    bool start_request,
+    const EthHeader &start_header,
+    ap_uint<11> start_payload_len,
+    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<1> &eth_tx_en,
+    ap_uint<4> &eth_txd,
+    ap_uint<1> &tx_frame_toggle,
+    ap_uint<1> &tx_active,
+    bool &tx_idle) {
 #pragma HLS INLINE
   static TxState tx_state = TX_IDLE;
   static bool tx_nibble_phase = false;
@@ -133,8 +138,12 @@ ethernet_tx_framer_step(bool start_request, const EthHeader &start_header,
     tx_active = 1;
     ap_uint<8> preamble_byte =
         (tx_byte_index == 7) ? ap_uint<8>(0xd5) : ap_uint<8>(0x55);
-    mii_tx_emit_byte_step(preamble_byte, tx_nibble_phase, eth_tx_en, eth_txd,
-                          byte_done);
+    mii_tx_emit_byte_step(
+        preamble_byte,
+        tx_nibble_phase,
+        eth_tx_en,
+        eth_txd,
+        byte_done);
     if (byte_done) {
       if (tx_byte_index == 7) {
         tx_byte_index = 0;
@@ -150,9 +159,16 @@ ethernet_tx_framer_step(bool start_request, const EthHeader &start_header,
     // Emit header/payload/padding bytes and fold each complete byte into FCS.
     tx_active = 1;
     ap_uint<8> out_byte = ethernet_frame_body_byte(
-        tx_header, tx_payload_buf, tx_payload_len, tx_byte_index);
-    mii_tx_emit_byte_step(out_byte, tx_nibble_phase, eth_tx_en, eth_txd,
-                          byte_done);
+        tx_header,
+        tx_payload_buf,
+        tx_payload_len,
+        tx_byte_index);
+    mii_tx_emit_byte_step(
+        out_byte,
+        tx_nibble_phase,
+        eth_tx_en,
+        eth_txd,
+        byte_done);
     if (byte_done) {
       ap_uint<32> next_crc = crc32_next_byte(tx_crc, out_byte);
       tx_crc = next_crc;
@@ -181,8 +197,12 @@ ethernet_tx_framer_step(bool start_request, const EthHeader &start_header,
       fcs_byte = tx_fcs.range(31, 24);
     }
 
-    mii_tx_emit_byte_step(fcs_byte, tx_nibble_phase, eth_tx_en, eth_txd,
-                          byte_done);
+    mii_tx_emit_byte_step(
+        fcs_byte,
+        tx_nibble_phase,
+        eth_tx_en,
+        eth_txd,
+        byte_done);
     if (byte_done) {
       if (tx_fcs_index == 3) {
         // Mark one complete transmitted frame for status logic.

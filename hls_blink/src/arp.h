@@ -21,9 +21,9 @@ struct ArpRequestInfo {
   ap_uint<32> sender_ip;
 };
 
-static ArpRequestInfo
-parse_arp_ipv4_request(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
-                       PacketView view) {
+static ArpRequestInfo parse_arp_ipv4_request(
+    const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
+    PacketView view) {
 #pragma HLS INLINE
   ArpRequestInfo info;
   info.valid = false;
@@ -54,9 +54,10 @@ parse_arp_ipv4_request(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
   return info;
 }
 
-static ap_uint<8> arp_reply_payload_byte(ap_uint<5> index,
-                                         ap_uint<48> requester_mac,
-                                         ap_uint<32> requester_ip) {
+static ap_uint<8> arp_reply_payload_byte(
+    ap_uint<5> index,
+    ap_uint<48> requester_mac,
+    ap_uint<32> requester_ip) {
 #pragma HLS INLINE
   switch ((unsigned)index) {
   case 0:

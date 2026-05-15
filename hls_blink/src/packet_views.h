@@ -38,9 +38,9 @@ struct UdpView {
   PacketView payload_view;
 };
 
-static Ipv4View
-parse_ipv4_view(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
-                PacketView view) {
+static Ipv4View parse_ipv4_view(
+    const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
+    PacketView view) {
 #pragma HLS INLINE
   Ipv4View ipv4;
   ipv4.valid = false;
@@ -87,8 +87,9 @@ static bool ipv4_is_unfragmented(const Ipv4View &ipv4) {
   return (ipv4.flags_fragment & 0x3fff) == 0;
 }
 
-static UdpView parse_udp_view(const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
-                              PacketView view) {
+static UdpView parse_udp_view(
+    const ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT],
+    PacketView view) {
 #pragma HLS INLINE
   UdpView udp;
   udp.valid = false;

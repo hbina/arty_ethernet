@@ -1,7 +1,7 @@
 #include "ap_int.h"
 
-extern "C" void blink_hls(ap_uint<1> frame_event, ap_uint<1> rx_active,
-                          ap_uint<4> &led);
+extern "C" void
+blink_hls(ap_uint<1> frame_event, ap_uint<1> rx_active, ap_uint<4> &led);
 
 int main() {
   ap_uint<4> led = 0;

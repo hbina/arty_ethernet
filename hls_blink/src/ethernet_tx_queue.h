@@ -12,8 +12,11 @@ static void ethernet_tx_queue_step(
     ap_uint<11> tx_payload_lens[TX_PACKET_SLOTS],
     bool tx_valid[TX_PACKET_SLOTS],
     ap_uint<8> tx_payloads[TX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<2> &tx_read_idx, ap_uint<1> &eth_tx_en, ap_uint<4> &eth_txd,
-    ap_uint<1> &tx_frame_toggle, ap_uint<1> &tx_active) {
+    ap_uint<2> &tx_read_idx,
+    ap_uint<1> &eth_tx_en,
+    ap_uint<4> &eth_txd,
+    ap_uint<1> &tx_frame_toggle,
+    ap_uint<1> &tx_active) {
 #pragma HLS INLINE
   static bool framer_active = false;
   static ap_uint<2> framer_slot_idx = 0;
@@ -32,9 +35,16 @@ static void ethernet_tx_queue_step(
   }
 
   bool tx_idle = false;
-  ethernet_tx_framer_step(start_request, start_header, start_payload_len,
-                          tx_payloads[framer_slot_idx_int], eth_tx_en, eth_txd,
-                          tx_frame_toggle, tx_active, tx_idle);
+  ethernet_tx_framer_step(
+      start_request,
+      start_header,
+      start_payload_len,
+      tx_payloads[framer_slot_idx_int],
+      eth_tx_en,
+      eth_txd,
+      tx_frame_toggle,
+      tx_active,
+      tx_idle);
 
   if (framer_active && tx_idle) {
     tx_valid[framer_slot_idx_int] = false;
