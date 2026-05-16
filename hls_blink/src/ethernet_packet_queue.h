@@ -24,6 +24,7 @@ struct TxRequest {
   ap_uint<32> arp_requester_ip;
   ap_uint<32> udp_requester_ip;
   ap_uint<16> udp_requester_port;
+  ap_uint<32> beacon_rx_count;
 };
 
 #endif

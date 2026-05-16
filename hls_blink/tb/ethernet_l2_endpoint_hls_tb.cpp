@@ -326,13 +326,13 @@ static void assert_valid_udp_reply(
   assert(frame[ip + 12] == 192);
   assert(frame[ip + 13] == 168);
   assert(frame[ip + 14] == 1);
-  assert(frame[ip + 15] == 50);
+  assert(frame[ip + 15] == 100);
   for (unsigned i = 0; i < 4; ++i) {
     assert(frame[ip + 16 + i] == requester_ip[i]);
   }
 
   const unsigned udp = ip + 20;
-  assert(read_be16(frame, udp + 0) == 1234);
+  assert(read_be16(frame, udp + 0) == 40000);
   assert(read_be16(frame, udp + 2) == requester_port);
   assert(read_be16(frame, udp + 4) == 16);
   assert(read_be16(frame, udp + 6) == 0);
@@ -428,7 +428,7 @@ static void assert_valid_arp_reply(
   assert(frame[arp + 14] == 192);
   assert(frame[arp + 15] == 168);
   assert(frame[arp + 16] == 1);
-  assert(frame[arp + 17] == 50);
+  assert(frame[arp + 17] == 100);
 
   for (unsigned i = 0; i < 6; ++i) {
     assert(frame[arp + 18 + i] == requester_mac[i]);
@@ -671,7 +671,7 @@ static void test_ipv4_view() {
   payload[16] = 192;
   payload[17] = 168;
   payload[18] = 1;
-  payload[19] = 50;
+  payload[19] = 100;
 
   PacketView view = {0, 20};
   Ipv4View ipv4 = parse_ipv4_view(payload, view);
@@ -681,7 +681,7 @@ static void test_ipv4_view() {
   assert(ipv4.protocol == 0x11);
   assert(ipv4.flags_fragment == 0);
   assert(ipv4.src_ip == 0xc0a8010a);
-  assert(ipv4.dst_ip == 0xc0a80132);
+  assert(ipv4.dst_ip == 0xc0a80164);
   assert(ipv4.payload_view.offset == 20);
   assert(ipv4.payload_view.len == 0);
 
@@ -708,15 +708,15 @@ static void test_udp_view() {
 
   payload[0] = 0x12;
   payload[1] = 0x34;
-  payload[2] = 0x04;
-  payload[3] = 0xd2;
+  payload[2] = 0x9c;
+  payload[3] = 0x40;
   payload[4] = 0x00;
   payload[5] = 0x10;
   PacketView view = {0, 16};
   UdpView udp = parse_udp_view(payload, view);
   assert(udp.valid);
   assert(udp.src_port == 0x1234);
-  assert(udp.dst_port == 1234);
+  assert(udp.dst_port == 40000);
   assert(udp.length == 16);
   assert(udp.payload_view.offset == 8);
   assert(udp.payload_view.len == 8);
@@ -737,7 +737,8 @@ int main() {
   assert_valid_tx_frame(
       beacon,
       {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-      {'A', 'R', 'T', 'Y', '_', 'B', 'E', 'A', 'C', 'O', 'N'});
+      {'A', 'R', 'T', 'Y', '_', 'B', 'E', 'A', 'C', 'O', 'N', '_',
+       'R', 'X', '=', '0', '0', '0', '0', '0', '0', '0', '0'});
 
   for (int i = 0; i < 16; ++i) {
     step(0, 0, 0, tx_en, txd, rx_accept, tx_frame, rx_active, tx_active);
@@ -829,8 +830,8 @@ int main() {
 
   const std::vector<uint8_t> host_mac = {0x66, 0x55, 0x44, 0x33, 0x22, 0x11};
   const std::vector<uint8_t> host_ip = {192, 168, 1, 10};
-  const std::vector<uint8_t> fpga_ip = {192, 168, 1, 50};
-  const std::vector<uint8_t> other_ip = {192, 168, 1, 51};
+  const std::vector<uint8_t> fpga_ip = {192, 168, 1, 100};
+  const std::vector<uint8_t> other_ip = {192, 168, 1, 101};
 
   send_rx_frame(arp_request_frame(
       {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
@@ -848,12 +849,18 @@ int main() {
   assert_no_tx_frame(768);
 
   send_rx_frame(
-      udp_request_frame(fpga_mac, host_mac, host_ip, fpga_ip, 49152, 1234, 0));
+      udp_request_frame(fpga_mac, host_mac, host_ip, fpga_ip, 49152, 40000, 0));
   std::vector<uint8_t> udp_reply = collect_tx_frame(1024);
   assert_valid_udp_reply(udp_reply, host_mac, host_ip, 49152);
 
-  send_rx_frame(
-      udp_request_frame(fpga_mac, host_mac, host_ip, other_ip, 49152, 1234, 0));
+  send_rx_frame(udp_request_frame(
+      fpga_mac,
+      host_mac,
+      host_ip,
+      other_ip,
+      49152,
+      40000,
+      0));
   assert_no_tx_frame(768);
 
   send_rx_frame(
@@ -866,7 +873,7 @@ int main() {
       host_ip,
       fpga_ip,
       49152,
-      1234,
+      40000,
       0x2000));
   assert_no_tx_frame(768);
 

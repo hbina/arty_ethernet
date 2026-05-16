@@ -35,8 +35,17 @@ static ap_uint<8> ack_payload_literal_byte(ap_uint<4> index) {
   }
 }
 
-// Return one byte from the fixed beacon payload literal, ARTY_BEACON.
-static ap_uint<8> beacon_payload_literal_byte(ap_uint<4> index) {
+static ap_uint<8> hex_digit_byte(ap_uint<4> value) {
+#pragma HLS INLINE
+  if (value < 10) {
+    return (ap_uint<8>)('0' + value);
+  }
+  return (ap_uint<8>)('A' + value - 10);
+}
+
+// Return one byte from the beacon payload literal, ARTY_BEACON_RX=<counter>.
+static ap_uint<8>
+beacon_payload_literal_byte(ap_uint<6> index, ap_uint<32> rx_count) {
 #pragma HLS INLINE
   switch ((unsigned)index) {
   case 0:
@@ -59,8 +68,32 @@ static ap_uint<8> beacon_payload_literal_byte(ap_uint<4> index) {
     return 'C';
   case 9:
     return 'O';
-  default:
+  case 10:
     return 'N';
+  case 11:
+    return '_';
+  case 12:
+    return 'R';
+  case 13:
+    return 'X';
+  case 14:
+    return '=';
+  case 15:
+    return hex_digit_byte(rx_count.range(31, 28));
+  case 16:
+    return hex_digit_byte(rx_count.range(27, 24));
+  case 17:
+    return hex_digit_byte(rx_count.range(23, 20));
+  case 18:
+    return hex_digit_byte(rx_count.range(19, 16));
+  case 19:
+    return hex_digit_byte(rx_count.range(15, 12));
+  case 20:
+    return hex_digit_byte(rx_count.range(11, 8));
+  case 21:
+    return hex_digit_byte(rx_count.range(7, 4));
+  default:
+    return hex_digit_byte(rx_count.range(3, 0));
   }
 }
 
@@ -152,7 +185,7 @@ static ap_uint<11> tx_request_payload_len(TxRequestKind request_kind) {
     return 8;
   }
   if (request_kind == TX_REQ_BEACON) {
-    return 11;
+    return 23;
   }
   if (request_kind == TX_REQ_ARP_REPLY) {
     return ARP_PAYLOAD_BYTES;
@@ -194,7 +227,8 @@ static void prepare_tx_slot_payload_step(
 #pragma HLS INLINE
   TxRequestKind request_kind = request.request_kind;
   ap_uint<11> payload_len = tx_request_payload_len(request_kind);
-  ap_uint<8> payload_byte = beacon_payload_literal_byte(payload_index);
+  ap_uint<8> payload_byte =
+      beacon_payload_literal_byte(payload_index, request.beacon_rx_count);
 
   if (request_kind == TX_REQ_ACK) {
     payload_byte = ack_payload_literal_byte(payload_index);
@@ -227,6 +261,7 @@ static TxRequest beacon_request() {
   request.arp_requester_ip = 0;
   request.udp_requester_ip = 0;
   request.udp_requester_port = 0;
+  request.beacon_rx_count = 0;
   return request;
 }
 

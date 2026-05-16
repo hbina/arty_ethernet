@@ -75,7 +75,7 @@ module hls_top (
     assign eth_txd = endpoint_eth_txd;
 
     ethernet_l2_endpoint_hls ethernet_l2_endpoint_hls_i (
-        .ap_clk(clk25),
+        .ap_clk(eth_rx_clk),
         .ap_rst(~pll_locked),
         .eth_rx_dv(eth_rx_dv),
         .eth_rxd(eth_rxd),
@@ -110,5 +110,4 @@ module hls_top (
         .led(led)
     );
 
-    wire unused_eth_rx_clk = eth_rx_clk;
 endmodule

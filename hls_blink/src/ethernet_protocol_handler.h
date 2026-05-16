@@ -69,10 +69,12 @@ static void protocol_queue_step(
       0,
       0,
       0,
+      0,
   };
   static ap_uint<6> prepare_index = 0;
   static ap_uint<2> prepare_tx_idx = 0;
   static ap_uint<32> rx_protocol_drop_count = 0;
+  static ap_uint<32> rx_packet_count = 0;
   static bool rx_accept = false;
   static ap_uint<3> parse_rx_idx = 0;
   static EthHeader parse_header = {0, 0, 0};
@@ -113,6 +115,7 @@ static void protocol_queue_step(
       ap_uint<11> payload_len = rx_payload_lens[read_idx_int];
       bool dest_ok =
           (header.dst_mac == FPGA_MAC) || (header.dst_mac == BROADCAST_MAC);
+      rx_packet_count++;
 
       if (rx_truncated[read_idx_int]) {
         rx_protocol_drop_count++;
@@ -130,6 +133,7 @@ static void protocol_queue_step(
         request.arp_requester_ip = 0;
         request.udp_requester_ip = 0;
         request.udp_requester_port = 0;
+        request.beacon_rx_count = 0;
         rx_accept = !rx_accept;
         rx_valid[read_idx_int] = false;
         rx_truncated[read_idx_int] = false;
@@ -183,6 +187,7 @@ static void protocol_queue_step(
       }
     } else if (beacon_tick) {
       TxRequest request = beacon_request();
+      request.beacon_rx_count = rx_packet_count;
       start_protocol_tx_request(
           request,
           tx_valid,
@@ -285,6 +290,7 @@ static void protocol_queue_step(
         request.arp_requester_ip = parse_arp_sender_ip;
         request.udp_requester_ip = 0;
         request.udp_requester_port = 0;
+        request.beacon_rx_count = 0;
         start_protocol_tx_request(
             request,
             tx_valid,
@@ -396,6 +402,7 @@ static void protocol_queue_step(
         request.arp_requester_ip = 0;
         request.udp_requester_ip = parse_ipv4_src_ip;
         request.udp_requester_port = parse_udp_src_port;
+        request.beacon_rx_count = 0;
         start_protocol_tx_request(
             request,
             tx_valid,
