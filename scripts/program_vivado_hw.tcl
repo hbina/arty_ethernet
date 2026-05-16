@@ -35,3 +35,7 @@ set_property PROGRAM.FILE $bitfile $dev
 program_hw_devices $dev
 
 puts "Programmed $dev with $bitfile"
+
+close_hw_target
+disconnect_hw_server
+close_hw_manager
