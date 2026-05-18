@@ -1,6 +1,6 @@
-# Arty A7-100T Vitis HLS Blink
+# Arty A7-100T Vitis HLS Ethernet Endpoint
 
-This project is a command-line Vitis HLS smoke test for a Digilent Arty A7 board. The connected board was verified through Vivado Hardware Manager as:
+This project is a command-line Vitis HLS Ethernet endpoint for a Digilent Arty A7 board. The connected board was verified through Vivado Hardware Manager as:
 
 ```text
 Cable:  Digilent/210319BE1CD4A
@@ -18,10 +18,10 @@ xc7a100ticsg324-1L
 
 The primary flow is Vitis HLS:
 
-1. `hls_blink/src/blink_hls.cpp` is C++ using `ap_uint`.
-2. `hls_blink/src/ethernet_l2_endpoint_hls.cpp` is a custom Layer-2 Ethernet endpoint in C++.
+1. `hls_ethernet/src/ethernet_status_hls.cpp` is C++ using `ap_uint`.
+2. `hls_ethernet/src/ethernet_l2_endpoint_hls.cpp` is a custom Layer-2 Ethernet endpoint in C++.
 3. Vitis HLS synthesizes those C++ blocks into Verilog RTL.
-4. `hls_blink/src/hls_top.v` wraps the HLS blocks for the Arty clock, Ethernet pins, and LEDs.
+4. `hls_ethernet/src/hls_top.v` wraps the HLS blocks for the Arty clock, Ethernet pins, and LEDs.
 5. Vivado places/routes the generated RTL and writes a bitstream.
 6. Vivado Hardware Manager or XSCT programs the FPGA over USB-JTAG.
 
@@ -30,13 +30,13 @@ This is not a MicroBlaze design. There is no soft CPU and no firmware ELF. The C
 ## Files
 
 ```text
-hls_blink/src/blink_hls.cpp        HLS C++ top function
-hls_blink/src/ethernet_l2_endpoint_hls.cpp
-hls_blink/src/hls_top.v            Small Verilog wrapper around HLS RTL
-hls_blink/tb/blink_hls_tb.cpp      C simulation testbench
-hls_blink/tb/ethernet_l2_endpoint_hls_tb.cpp
-hls_blink/scripts/run_hls.tcl      Vitis HLS batch script
-hls_blink/scripts/build_hls_bitstream.tcl
+hls_ethernet/src/ethernet_status_hls.cpp        HLS C++ top function
+hls_ethernet/src/ethernet_l2_endpoint_hls.cpp
+hls_ethernet/src/hls_top.v            Small Verilog wrapper around HLS RTL
+hls_ethernet/tb/ethernet_status_hls_tb.cpp      C simulation testbench
+hls_ethernet/tb/ethernet_l2_endpoint_hls_tb.cpp
+hls_ethernet/scripts/run_hls.tcl      Vitis HLS batch script
+hls_ethernet/scripts/build_hls_bitstream.tcl
 constraints/arty_a7.xdc            Arty A7 100 MHz clock and LED pins
 scripts/send_broadcast_eth.py      Raw custom EtherType send/listen utility
 scripts/probe_vivado_hw.tcl        Discover connected JTAG hardware
@@ -52,7 +52,7 @@ Makefile                           Command wrappers
 ├── Makefile
 ├── README.md
 ├── constraints/
-├── hls_blink/
+├── hls_ethernet/
 │   ├── scripts/
 │   ├── src/
 │   └── tb/
@@ -61,15 +61,15 @@ Makefile                           Command wrappers
 └── build/                         Generated, ignored
 ```
 
-`hls_blink/` is the main design area. The `src/` directory contains synthesizable HLS C++ source and the small Verilog wrapper used to connect the generated HLS modules to the Arty clock, Ethernet pins, and LEDs. The `tb/` directory contains C simulation testbenches with `main()` functions. The `scripts/` directory inside `hls_blink/` contains the HLS and Vivado build scripts for this design.
+`hls_ethernet/` is the main design area. The `src/` directory contains synthesizable HLS C++ source and the small Verilog wrapper used to connect the generated HLS modules to the Arty clock, Ethernet pins, and LEDs. The `tb/` directory contains C simulation testbenches with `main()` functions. The `scripts/` directory inside `hls_ethernet/` contains the HLS and Vivado build scripts for this design.
 
-`constraints/` contains board-level XDC constraints. These are shared by both the HLS build and the older RTL-only blink flow.
+`constraints/` contains board-level XDC constraints. These are shared by both the HLS build and the older RTL-only status LED flow.
 
 `scripts/` contains general hardware scripts that are not specific to the HLS C++ source. The Vivado scripts probe and program the connected board through Hardware Manager. The XSCT scripts are kept as generic command-line examples, but Vivado Hardware Manager gives better board-identification diagnostics.
 
-`rtl/` contains the older handwritten Verilog blink example. It is useful as a reference, but the primary project flow is the Vitis HLS flow in `hls_blink/`.
+`rtl/` contains the older handwritten Verilog status LED example. It is useful as a reference, but the primary project flow is the Vitis HLS flow in `hls_ethernet/`.
 
-`build/`, `hls_blink/build/`, `.Xil/`, `logs/`, `*.jou`, and `*.log` are generated outputs. They are ignored by git and can be recreated with `make hls-bit` or `make bit`.
+`build/`, `hls_ethernet/build/`, `.Xil/`, `logs/`, `*.jou`, and `*.log` are generated outputs. They are ignored by git and can be recreated with `make hls-bit` or `make bit`.
 
 ## Discover The Connected Board
 
@@ -82,14 +82,14 @@ lsusb
 To identify the actual FPGA, start `hw_server` in one terminal:
 
 ```sh
-cd /home/hbina085/Downloads/arty_blink
+cd /path/to/arty_ethernet_endpoint
 make hw-server HW_PORT=3124
 ```
 
 Then probe the JTAG chain from another terminal:
 
 ```sh
-cd /home/hbina085/Downloads/arty_blink
+cd /path/to/arty_ethernet_endpoint
 make probe-board HW_PORT=3124
 ```
 
@@ -107,25 +107,25 @@ Use a different `HW_PORT` if `3121` or another port is already in use.
 Build the HLS Verilog, export the HLS IP, and build the FPGA bitstream:
 
 ```sh
-cd /home/hbina085/Downloads/arty_blink
+cd /path/to/arty_ethernet_endpoint
 make hls-bit
 ```
 
 The generated bitstream is:
 
 ```text
-hls_blink/build/hls_blink.bit
+hls_ethernet/build/hls_ethernet.bit
 ```
 
 ## Custom Ethernet Layer-2 Endpoint
 
-The bitstream includes a minimal custom Ethernet endpoint with no MicroBlaze, lwIP, IP, ARP, DHCP, UDP, or TCP. The FPGA MAC address is:
+The bitstream includes a minimal Ethernet endpoint with no MicroBlaze, lwIP, DHCP, UDP reply service, or TCP. The FPGA MAC address is:
 
 ```text
 02:00:00:00:00:01
 ```
 
-It uses EtherType `0x88B5`, periodically transmits a broadcast `ARTY_BEACON` payload, and replies to valid unicast or broadcast custom frames with `ARTY_ACK`. Frames are padded to the Ethernet minimum payload length and include preamble, SFD, and FCS from the FPGA TX path.
+It periodically transmits a broadcast diagnostics beacon with custom EtherType `0x88B5`, and it replies to valid ARP requests for `192.168.1.100`. Other received frames, including custom probes and IPv4/UDP packets, are consumed for diagnostics counters but do not generate ACK replies. Frames are padded to the Ethernet minimum payload length and include preamble, SFD, and FCS from the FPGA TX path.
 
 On a Linux host connected through `eno1`, listen for beacons and send a test frame:
 
@@ -169,7 +169,7 @@ The programming script checks for an `xc7a100t` target before programming.
 
 ## Test
 
-After programming, the Arty user LEDs should blink/change. For command-line verification:
+After programming, the Arty user LEDs should indicate Ethernet activity and frame events. For command-line verification:
 
 ```sh
 make hls
@@ -178,14 +178,14 @@ make hls
 This runs the HLS C simulation and C synthesis. A successful run reports `CSim done with 0 errors` and writes generated Verilog under:
 
 ```text
-hls_blink/build/hls/blink_hls_project/solution1/syn/verilog/blink_hls.v
+hls_ethernet/build/hls/ethernet_status_hls_project/solution1/syn/verilog/ethernet_status_hls.v
 ```
 
 To inspect timing/utilization after a full bitstream build:
 
 ```sh
-less hls_blink/build/timing_summary.rpt
-less hls_blink/build/utilization.rpt
+less hls_ethernet/build/timing_summary.rpt
+less hls_ethernet/build/utilization.rpt
 ```
 
 First install pytest. On Debian/Ubuntu:
@@ -218,9 +218,9 @@ This removes generated build outputs and Vivado logs.
 
 ## Notes
 
-`v++` is not used for this Arty blink project. This project uses `vitis-run --mode hls --tcl` for HLS synthesis and Vivado for implementation/programming.
+`v++` is not used for this Arty Ethernet endpoint project. This project uses `vitis-run --mode hls --tcl` for HLS synthesis and Vivado for implementation/programming.
 
-The older RTL-only blink remains in `rtl/blink.v` and can be built with:
+The older RTL-only status LED example remains in `rtl/status_led.v` and can be built with:
 
 ```sh
 make bit

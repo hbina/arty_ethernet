@@ -2,7 +2,7 @@
 .Xil/
 .vitis_data/
 build/
-hls_blink/build/
+hls_ethernet/build/
 logs/
 
 # Vivado/Vitis logs and journals

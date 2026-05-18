@@ -10,7 +10,7 @@ from .ethernet import RawEthernet
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BITFILE = REPO_ROOT / "hls_blink" / "build" / "hls_blink.bit"
+DEFAULT_BITFILE = REPO_ROOT / "hls_ethernet" / "build" / "hls_ethernet.bit"
 
 
 def pytest_addoption(parser):

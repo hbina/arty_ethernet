@@ -8,7 +8,7 @@ HW_SERVER ?= $(XILINX_ROOT)/Vitis/bin/hw_server
 XSCT ?= $(XILINX_ROOT)/Vitis/bin/xsct
 HW_PORT ?= 3124
 IFACE ?= eno1
-BITFILE ?= hls_blink/build/hls_blink.bit
+BITFILE ?= hls_ethernet/build/hls_ethernet.bit
 PYTHON ?= python3
 PYTEST ?= $(PYTHON) -m pytest
 
@@ -21,7 +21,7 @@ PART ?= xc7a100ticsg324-1L
 .PHONY: test-hw install-test-board
 .PHONY: format check-format install-hooks
 
-FORMAT_FILES := $(shell find hls_blink/src hls_blink/tb -name "*.cpp" -o -name "*.h" -o -name "*.hpp")
+FORMAT_FILES := $(shell find hls_ethernet/src hls_ethernet/tb -name "*.cpp" -o -name "*.h" -o -name "*.hpp")
 
 format:
 	clang-format -i $(FORMAT_FILES)
@@ -45,7 +45,7 @@ probe-board:
 	HW_PORT=$(HW_PORT) $(VIVADO) -mode batch -source scripts/probe_vivado_hw.tcl
 
 program:
-	HW_PORT=$(HW_PORT) $(XSCT) scripts/program_hw.tcl build/blink.bit
+	HW_PORT=$(HW_PORT) $(XSCT) scripts/program_hw.tcl build/status_led.bit
 
 program-vivado:
 	HW_PORT=$(HW_PORT) $(VIVADO) -mode batch -source scripts/program_vivado_hw.tcl -tclargs $(BITFILE)
@@ -54,13 +54,13 @@ vpp-version:
 	$(VPP) --version
 
 hls:
-	PART=$(PART) $(VITIS_RUN) --mode hls --tcl hls_blink/scripts/run_hls.tcl
+	PART=$(PART) $(VITIS_RUN) --mode hls --tcl hls_ethernet/scripts/run_hls.tcl
 
 hls-bit: hls
-	PART=$(PART) $(VIVADO) -mode batch -source hls_blink/scripts/build_hls_bitstream.tcl
+	PART=$(PART) $(VIVADO) -mode batch -source hls_ethernet/scripts/build_hls_bitstream.tcl
 
 hls-program:
-	HW_PORT=$(HW_PORT) $(XSCT) scripts/program_hw.tcl hls_blink/build/hls_blink.bit
+	HW_PORT=$(HW_PORT) $(XSCT) scripts/program_hw.tcl hls_ethernet/build/hls_ethernet.bit
 
 test-hw:
 	$(PYTEST) tests/hw --iface $(IFACE) --hw-port $(HW_PORT)
@@ -69,4 +69,4 @@ install-test-board:
 	$(PYTEST) tests/hw --iface $(IFACE) --program --hw-port $(HW_PORT)
 
 clean:
-	rm -rf .Xil build hls_blink/build vivado*.jou vivado*.log vivado_pid*.str
+	rm -rf .Xil build hls_ethernet/build vivado*.jou vivado*.log vivado_pid*.str

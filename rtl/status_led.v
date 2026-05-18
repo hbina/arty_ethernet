@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module blink #(
+module status_led #(
     parameter integer CLK_HZ = 100_000_000
 ) (
     input  wire       CLK100MHZ,

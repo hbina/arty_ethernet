@@ -4,7 +4,7 @@ set proj_dir [file normalize [file join $script_dir ..]]
 if {[llength $argv] > 0} {
     set bitfile [lindex $argv 0]
 } else {
-    set bitfile [file join $proj_dir build blink.bit]
+    set bitfile [file join $proj_dir build status_led.bit]
 }
 
 if {![file exists $bitfile]} {

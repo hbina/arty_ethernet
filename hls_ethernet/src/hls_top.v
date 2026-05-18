@@ -102,7 +102,7 @@ module hls_top (
         activity_sync <= {activity_sync[0], rx_active_eth | tx_active_eth};
     end
 
-    blink_hls blink_hls_i (
+    ethernet_status_hls ethernet_status_hls_i (
         .ap_clk(CLK100MHZ),
         .ap_rst(1'b0),
         .frame_event(frame_event_sys),

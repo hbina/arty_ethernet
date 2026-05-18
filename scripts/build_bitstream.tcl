@@ -10,17 +10,17 @@ if {[info exists ::env(PART)]} {
 set build_dir [file join $proj_dir build]
 file mkdir $build_dir
 
-read_verilog [file join $proj_dir rtl blink.v]
+read_verilog [file join $proj_dir rtl status_led.v]
 read_xdc [file join $proj_dir constraints arty_a7.xdc]
 
-synth_design -top blink -part $part
+synth_design -top status_led -part $part
 opt_design
 place_design
 route_design
 
 report_timing_summary -file [file join $build_dir timing_summary.rpt]
 report_utilization -file [file join $build_dir utilization.rpt]
-write_checkpoint -force [file join $build_dir blink_routed.dcp]
-write_bitstream -force [file join $build_dir blink.bit]
+write_checkpoint -force [file join $build_dir status_led_routed.dcp]
+write_bitstream -force [file join $build_dir status_led.bit]
 
-puts "Wrote [file join $build_dir blink.bit] for $part"
+puts "Wrote [file join $build_dir status_led.bit] for $part"

@@ -7,7 +7,7 @@ if {[info exists ::env(HW_PORT)]} {
 if {[llength $argv] > 0} {
     set bitfile [lindex $argv 0]
 } else {
-    set bitfile [file normalize "hls_blink/build/hls_blink.bit"]
+    set bitfile [file normalize "hls_ethernet/build/hls_ethernet.bit"]
 }
 
 if {![file exists $bitfile]} {
