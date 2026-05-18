@@ -274,85 +274,6 @@ static std::vector<uint8_t> bytes_from_string(const std::string &text) {
   return std::vector<uint8_t>(text.begin(), text.end());
 }
 
-static bool tx_frame_has_dst(
-    const std::vector<uint8_t> &frame,
-    const std::vector<uint8_t> &dst) {
-  if (frame.size() < 22) {
-    return false;
-  }
-  unsigned eth =
-      (frame.size() >= 8 && frame[0] == 0x55 && frame[7] == 0xd5) ? 8 : 0;
-  for (unsigned i = 0; i < 6; ++i) {
-    if (frame[eth + i] != dst[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static void assert_valid_udp_reply(
-    const std::vector<uint8_t> &frame,
-    const std::vector<uint8_t> &requester_mac,
-    const std::vector<uint8_t> &requester_ip,
-    uint16_t requester_port) {
-  const unsigned body_len = 14 + 46;
-  if (frame.size() != 8 + body_len + 4) {
-    std::fprintf(
-        stderr,
-        "bad UDP frame size: expected %u got %u\n",
-        8 + body_len + 4,
-        (unsigned)frame.size());
-  }
-  assert(frame.size() == 8 + body_len + 4);
-
-  for (int i = 0; i < 7; ++i) {
-    assert(frame[i] == 0x55);
-  }
-  assert(frame[7] == 0xd5);
-
-  const unsigned eth = 8;
-  for (unsigned i = 0; i < 6; ++i) {
-    assert(frame[eth + i] == requester_mac[i]);
-  }
-
-  const uint8_t fpga_mac[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
-  for (unsigned i = 0; i < 6; ++i) {
-    assert(frame[eth + 6 + i] == fpga_mac[i]);
-  }
-  assert(frame[eth + 12] == 0x08);
-  assert(frame[eth + 13] == 0x00);
-
-  const unsigned ip = eth + 14;
-  assert(frame[ip + 0] == 0x45);
-  assert(read_be16(frame, ip + 2) == 36);
-  assert(read_be16(frame, ip + 6) == 0);
-  assert(frame[ip + 8] == 64);
-  assert(frame[ip + 9] == 17);
-  assert(read_be16(frame, ip + 10) == ipv4_header_checksum(frame, ip));
-  assert(frame[ip + 12] == 192);
-  assert(frame[ip + 13] == 168);
-  assert(frame[ip + 14] == 1);
-  assert(frame[ip + 15] == 100);
-  for (unsigned i = 0; i < 4; ++i) {
-    assert(frame[ip + 16 + i] == requester_ip[i]);
-  }
-
-  const unsigned udp = ip + 20;
-  assert(read_be16(frame, udp + 0) == 40000);
-  assert(read_be16(frame, udp + 2) == requester_port);
-  assert(read_be16(frame, udp + 4) == 16);
-  assert(read_be16(frame, udp + 6) == 0);
-  const uint8_t ack[] = {'A', 'R', 'T', 'Y', '_', 'A', 'C', 'K'};
-  for (unsigned i = 0; i < 8; ++i) {
-    assert(frame[udp + 8 + i] == ack[i]);
-  }
-  for (unsigned i = 36; i < 46; ++i) {
-    assert(frame[eth + 14 + i] == 0x00);
-  }
-
-  assert_fcs(frame, eth, body_len);
-}
-
 static std::vector<uint8_t> arp_request_frame(
     const std::vector<uint8_t> &dst,
     const std::vector<uint8_t> &src,
@@ -498,116 +419,6 @@ static void send_rx_frame(const std::vector<uint8_t> &frame) {
         tx_active);
   }
   step(0, 0, 0, tx_en, txd, rx_accept, tx_frame, rx_active, tx_active);
-}
-
-struct TxCapture {
-  std::vector<std::vector<uint8_t>> frames;
-  bool in_frame;
-  bool low;
-  uint8_t byte;
-};
-
-static void capture_tx_step(
-    ap_uint<1> rx_dv,
-    ap_uint<4> rxd,
-    ap_uint<1> rxerr,
-    TxCapture &capture,
-    ap_uint<1> &tx_en,
-    ap_uint<4> &txd,
-    ap_uint<1> &rx_accept,
-    ap_uint<1> &tx_frame,
-    ap_uint<1> &rx_active,
-    ap_uint<1> &tx_active) {
-  step(
-      rx_dv,
-      rxd,
-      rxerr,
-      tx_en,
-      txd,
-      rx_accept,
-      tx_frame,
-      rx_active,
-      tx_active);
-
-  if (tx_en) {
-    if (!capture.in_frame) {
-      capture.frames.push_back(std::vector<uint8_t>());
-      capture.in_frame = true;
-      capture.low = false;
-    }
-    if (!capture.low) {
-      capture.byte = (uint8_t)txd;
-    } else {
-      capture.frames.back().push_back(capture.byte | ((uint8_t)txd << 4));
-    }
-    capture.low = !capture.low;
-  } else if (capture.in_frame) {
-    capture.in_frame = false;
-    capture.low = false;
-  }
-}
-
-static std::vector<std::vector<uint8_t>> send_rx_frames_collect_tx(
-    const std::vector<std::vector<uint8_t>> &frames,
-    unsigned idle_cycles) {
-  TxCapture capture = {std::vector<std::vector<uint8_t>>(), false, false, 0};
-  ap_uint<1> tx_en = 0, rx_accept = 0, tx_frame = 0, rx_active = 0,
-             tx_active = 0;
-  ap_uint<4> txd = 0;
-
-  for (const std::vector<uint8_t> &frame : frames) {
-    for (uint8_t byte : frame) {
-      capture_tx_step(
-          1,
-          byte & 0x0f,
-          0,
-          capture,
-          tx_en,
-          txd,
-          rx_accept,
-          tx_frame,
-          rx_active,
-          tx_active);
-      capture_tx_step(
-          1,
-          byte >> 4,
-          0,
-          capture,
-          tx_en,
-          txd,
-          rx_accept,
-          tx_frame,
-          rx_active,
-          tx_active);
-    }
-    capture_tx_step(
-        0,
-        0,
-        0,
-        capture,
-        tx_en,
-        txd,
-        rx_accept,
-        tx_frame,
-        rx_active,
-        tx_active);
-  }
-
-  for (unsigned i = 0; i < idle_cycles; ++i) {
-    capture_tx_step(
-        0,
-        0,
-        0,
-        capture,
-        tx_en,
-        txd,
-        rx_accept,
-        tx_frame,
-        rx_active,
-        tx_active);
-  }
-
-  return capture.frames;
 }
 
 static void assert_no_tx_frame(unsigned max_cycles) {
@@ -785,12 +596,7 @@ int main() {
       0x0e, 0x0f, 0x88, 0xb5, 'p',  'i',  'n',  'g'};
   append_eth_fcs(valid_rx_frame);
   send_rx_frame(valid_rx_frame);
-
-  std::vector<uint8_t> ack = collect_tx_frame(512);
-  assert_valid_tx_frame(
-      ack,
-      {0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f},
-      {'A', 'R', 'T', 'Y', '_', 'A', 'C', 'K'});
+  assert_no_tx_frame(512);
 
   std::vector<uint8_t> wrong_ethertype = valid_rx_frame;
   wrong_ethertype[20] = 0x08;
@@ -809,60 +615,9 @@ int main() {
     broadcast_rx[i] = 0xff;
   }
   send_rx_frame(broadcast_rx);
-  std::vector<uint8_t> broadcast_ack = collect_tx_frame(512);
-  assert_valid_tx_frame(
-      broadcast_ack,
-      {0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f},
-      {'A', 'R', 'T', 'Y', '_', 'A', 'C', 'K'});
+  assert_no_tx_frame(512);
 
   const std::vector<uint8_t> fpga_mac = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
-  const std::vector<uint8_t> queued_src0 = {0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x20};
-  const std::vector<uint8_t> queued_src1 = {0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x21};
-  std::vector<std::vector<uint8_t>> queued_tx = send_rx_frames_collect_tx(
-      {custom_request_frame(fpga_mac, queued_src0, {'q', '0'}),
-       custom_request_frame(fpga_mac, queued_src1, {'q', '1'})},
-      1536);
-  unsigned queued_matches = 0;
-  const std::vector<std::vector<uint8_t>> queued_srcs = {
-      queued_src0,
-      queued_src1};
-  for (const std::vector<uint8_t> &frame : queued_tx) {
-    if (queued_matches < queued_srcs.size() &&
-        tx_frame_has_dst(frame, queued_srcs[queued_matches])) {
-      assert_valid_tx_frame(
-          frame,
-          queued_srcs[queued_matches],
-          {'A', 'R', 'T', 'Y', '_', 'A', 'C', 'K'});
-      queued_matches++;
-    }
-  }
-  assert(queued_matches == queued_srcs.size());
-
-  std::vector<std::vector<uint8_t>> pressure_srcs;
-  std::vector<std::vector<uint8_t>> pressure_rx;
-  for (unsigned i = 0; i < 8; ++i) {
-    std::vector<uint8_t> src = {0x0a, 0x0b, 0x0c, 0x0d, 0x30, (uint8_t)i};
-    pressure_srcs.push_back(src);
-    pressure_rx.push_back(
-        custom_request_frame(fpga_mac, src, {'p', (uint8_t)i}));
-  }
-
-  std::vector<std::vector<uint8_t>> pressure_tx =
-      send_rx_frames_collect_tx(pressure_rx, 4096);
-  unsigned pressure_matches = 0;
-  for (const std::vector<uint8_t> &frame : pressure_tx) {
-    if (pressure_matches < pressure_srcs.size() &&
-        tx_frame_has_dst(frame, pressure_srcs[pressure_matches])) {
-      assert_valid_tx_frame(
-          frame,
-          pressure_srcs[pressure_matches],
-          {'A', 'R', 'T', 'Y', '_', 'A', 'C', 'K'});
-      pressure_matches++;
-    }
-  }
-  assert(pressure_matches >= 4);
-  assert(pressure_matches <= pressure_srcs.size());
-
   const std::vector<uint8_t> host_mac = {0x66, 0x55, 0x44, 0x33, 0x22, 0x11};
   const std::vector<uint8_t> host_ip = {192, 168, 1, 10};
   const std::vector<uint8_t> fpga_ip = {192, 168, 1, 100};
@@ -885,8 +640,7 @@ int main() {
 
   send_rx_frame(
       udp_request_frame(fpga_mac, host_mac, host_ip, fpga_ip, 49152, 40000, 0));
-  std::vector<uint8_t> udp_reply = collect_tx_frame(1024);
-  assert_valid_udp_reply(udp_reply, host_mac, host_ip, 49152);
+  assert_no_tx_frame(1024);
 
   send_rx_frame(udp_request_frame(
       fpga_mac,

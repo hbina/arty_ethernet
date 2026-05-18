@@ -10,8 +10,7 @@
 enum ProtocolState {
   PROTO_IDLE = 0,
   PROTO_PARSE_ARP = 1,
-  PROTO_PARSE_IPV4_UDP = 2,
-  PROTO_PREPARE_TX = 3
+  PROTO_PREPARE_TX = 2
 };
 
 static void start_protocol_tx_request(
@@ -74,20 +73,15 @@ static void protocol_queue_step(
       0,
       0,
       0,
-      0,
-      0,
   };
   static ap_uint<11> prepare_index = 0;
   static ap_uint<2> prepare_tx_idx = 0;
   static ap_uint<32> rx_protocol_drop_count = 0;
   static ap_uint<32> rx_packet_count = 0;
   static ap_uint<32> arp_reply_count = 0;
-  static ap_uint<32> udp_reply_count = 0;
   static ap_uint<32> uptime_beacon_count = 0;
   static bool rx_accept = false;
   static ap_uint<3> parse_rx_idx = 0;
-  static EthHeader parse_header = {0, 0, 0};
-  static ap_uint<11> parse_payload_len = 0;
   static ap_uint<5> parse_index = 0;
   static ap_uint<16> parse_arp_hw_type = 0;
   static ap_uint<16> parse_arp_proto_type = 0;
@@ -97,15 +91,6 @@ static void protocol_queue_step(
   static ap_uint<48> parse_arp_sender_mac = 0;
   static ap_uint<32> parse_arp_sender_ip = 0;
   static ap_uint<32> parse_arp_target_ip = 0;
-  static ap_uint<8> parse_ipv4_version_ihl = 0;
-  static ap_uint<16> parse_ipv4_total_len = 0;
-  static ap_uint<16> parse_ipv4_flags_fragment = 0;
-  static ap_uint<8> parse_ipv4_protocol = 0;
-  static ap_uint<32> parse_ipv4_src_ip = 0;
-  static ap_uint<32> parse_ipv4_dst_ip = 0;
-  static ap_uint<16> parse_udp_src_port = 0;
-  static ap_uint<16> parse_udp_dst_port = 0;
-  static ap_uint<16> parse_udp_len = 0;
 
   bool beacon_tick = false;
   if (beacon_count == BEACON_INTERVAL_CYCLES - 1) {
@@ -132,43 +117,15 @@ static void protocol_queue_step(
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
       } else if (dest_ok && header.ethertype == CUSTOM_ETHERTYPE) {
-        ProtocolTxRequest request;
-        request.valid = true;
-        request.header.dst_mac = header.src_mac;
-        request.header.src_mac = FPGA_MAC;
-        request.header.ethertype = CUSTOM_ETHERTYPE;
-        request.len = protocol_tx_frame_body_len(PROTO_TX_ACK);
-        request.kind = PROTO_TX_ACK;
-        request.arp_requester_mac = 0;
-        request.arp_requester_ip = 0;
-        request.udp_requester_ip = 0;
-        request.udp_requester_port = 0;
-        request.rx_packet_count = 0;
-        request.rx_queue_drop_count = 0;
-        request.rx_protocol_drop_count = 0;
-        request.tx_drop_count = 0;
-        request.arp_reply_count = 0;
-        request.udp_reply_count = 0;
-        request.uptime_beacon_count = 0;
+        rx_protocol_drop_count++;
         rx_accept = !rx_accept;
         rx_valid[read_idx_int] = false;
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
-        start_protocol_tx_request(
-            request,
-            tx_valid,
-            tx_write_idx,
-            preparing_payload,
-            prepare_request,
-            prepare_index,
-            prepare_tx_idx,
-            tx_drop_count);
       } else if (
           dest_ok && header.ethertype == ARP_ETHERTYPE &&
           payload_len >= ARP_PAYLOAD_BYTES) {
         parse_rx_idx = read_idx;
-        parse_header = header;
-        parse_payload_len = payload_len;
         parse_index = 0;
         parse_arp_hw_type = 0;
         parse_arp_proto_type = 0;
@@ -179,23 +136,6 @@ static void protocol_queue_step(
         parse_arp_sender_ip = 0;
         parse_arp_target_ip = 0;
         protocol_state = PROTO_PARSE_ARP;
-      } else if (
-          dest_ok && header.ethertype == IPV4_ETHERTYPE &&
-          payload_len >= IPV4_HEADER_BYTES + UDP_HEADER_BYTES) {
-        parse_rx_idx = read_idx;
-        parse_header = header;
-        parse_payload_len = payload_len;
-        parse_index = 0;
-        parse_ipv4_version_ihl = 0;
-        parse_ipv4_total_len = 0;
-        parse_ipv4_flags_fragment = 0;
-        parse_ipv4_protocol = 0;
-        parse_ipv4_src_ip = 0;
-        parse_ipv4_dst_ip = 0;
-        parse_udp_src_port = 0;
-        parse_udp_dst_port = 0;
-        parse_udp_len = 0;
-        protocol_state = PROTO_PARSE_IPV4_UDP;
       } else {
         rx_protocol_drop_count++;
         rx_valid[read_idx_int] = false;
@@ -209,7 +149,7 @@ static void protocol_queue_step(
       request.rx_protocol_drop_count = rx_protocol_drop_count;
       request.tx_drop_count = tx_drop_count;
       request.arp_reply_count = arp_reply_count;
-      request.udp_reply_count = udp_reply_count;
+      request.udp_reply_count = 0;
       request.uptime_beacon_count = uptime_beacon_count;
       start_protocol_tx_request(
           request,
@@ -314,8 +254,6 @@ static void protocol_queue_step(
         request.kind = PROTO_TX_ARP_REPLY;
         request.arp_requester_mac = parse_arp_sender_mac;
         request.arp_requester_ip = parse_arp_sender_ip;
-        request.udp_requester_ip = 0;
-        request.udp_requester_port = 0;
         request.rx_packet_count = 0;
         request.rx_queue_drop_count = 0;
         request.rx_protocol_drop_count = 0;
@@ -324,128 +262,6 @@ static void protocol_queue_step(
         request.udp_reply_count = 0;
         request.uptime_beacon_count = 0;
         arp_reply_count++;
-        start_protocol_tx_request(
-            request,
-            tx_valid,
-            tx_write_idx,
-            preparing_payload,
-            prepare_request,
-            prepare_index,
-            prepare_tx_idx,
-            tx_drop_count);
-      } else {
-        rx_protocol_drop_count++;
-      }
-      rx_valid[parse_rx_idx_int] = false;
-      rx_truncated[parse_rx_idx_int] = false;
-      rx_read_idx = parse_rx_idx + 1;
-      protocol_state = PROTO_IDLE;
-    } else {
-      parse_index++;
-    }
-  } else if (!preparing_payload && protocol_state == PROTO_PARSE_IPV4_UDP) {
-    unsigned parse_rx_idx_int = parse_rx_idx;
-    ap_uint<8> data_byte = rx_payloads[parse_rx_idx_int][parse_index];
-
-    switch ((unsigned)parse_index) {
-    case 0:
-      parse_ipv4_version_ihl = data_byte;
-      break;
-    case 2:
-      parse_ipv4_total_len.range(15, 8) = data_byte;
-      break;
-    case 3:
-      parse_ipv4_total_len.range(7, 0) = data_byte;
-      break;
-    case 6:
-      parse_ipv4_flags_fragment.range(15, 8) = data_byte;
-      break;
-    case 7:
-      parse_ipv4_flags_fragment.range(7, 0) = data_byte;
-      break;
-    case 9:
-      parse_ipv4_protocol = data_byte;
-      break;
-    case 12:
-      parse_ipv4_src_ip.range(31, 24) = data_byte;
-      break;
-    case 13:
-      parse_ipv4_src_ip.range(23, 16) = data_byte;
-      break;
-    case 14:
-      parse_ipv4_src_ip.range(15, 8) = data_byte;
-      break;
-    case 15:
-      parse_ipv4_src_ip.range(7, 0) = data_byte;
-      break;
-    case 16:
-      parse_ipv4_dst_ip.range(31, 24) = data_byte;
-      break;
-    case 17:
-      parse_ipv4_dst_ip.range(23, 16) = data_byte;
-      break;
-    case 18:
-      parse_ipv4_dst_ip.range(15, 8) = data_byte;
-      break;
-    case 19:
-      parse_ipv4_dst_ip.range(7, 0) = data_byte;
-      break;
-    case 20:
-      parse_udp_src_port.range(15, 8) = data_byte;
-      break;
-    case 21:
-      parse_udp_src_port.range(7, 0) = data_byte;
-      break;
-    case 22:
-      parse_udp_dst_port.range(15, 8) = data_byte;
-      break;
-    case 23:
-      parse_udp_dst_port.range(7, 0) = data_byte;
-      break;
-    case 24:
-      parse_udp_len.range(15, 8) = data_byte;
-      break;
-    case 25:
-      parse_udp_len.range(7, 0) = data_byte;
-      break;
-    default:
-      break;
-    }
-
-    if (parse_index == IPV4_HEADER_BYTES + UDP_HEADER_BYTES - 1) {
-      ap_uint<4> ipv4_version = parse_ipv4_version_ihl.range(7, 4);
-      ap_uint<4> ipv4_ihl = parse_ipv4_version_ihl.range(3, 0);
-      bool ipv4_valid =
-          (ipv4_version == 4) && (ipv4_ihl == 5) &&
-          (parse_ipv4_total_len >= IPV4_HEADER_BYTES + UDP_HEADER_BYTES) &&
-          (parse_ipv4_total_len <= parse_payload_len) &&
-          (parse_ipv4_dst_ip == FPGA_IP) &&
-          (parse_ipv4_protocol == IPV4_PROTOCOL_UDP) &&
-          ((parse_ipv4_flags_fragment & 0x3fff) == 0);
-      bool udp_valid =
-          (parse_udp_len >= UDP_HEADER_BYTES) &&
-          (parse_udp_len <= parse_ipv4_total_len - IPV4_HEADER_BYTES) &&
-          (parse_udp_dst_port == UDP_FPGA_PORT);
-      if (ipv4_valid && udp_valid) {
-        ProtocolTxRequest request;
-        request.valid = true;
-        request.header.dst_mac = parse_header.src_mac;
-        request.header.src_mac = FPGA_MAC;
-        request.header.ethertype = IPV4_ETHERTYPE;
-        request.len = protocol_tx_frame_body_len(PROTO_TX_UDP_REPLY);
-        request.kind = PROTO_TX_UDP_REPLY;
-        request.arp_requester_mac = 0;
-        request.arp_requester_ip = 0;
-        request.udp_requester_ip = parse_ipv4_src_ip;
-        request.udp_requester_port = parse_udp_src_port;
-        request.rx_packet_count = 0;
-        request.rx_queue_drop_count = 0;
-        request.rx_protocol_drop_count = 0;
-        request.tx_drop_count = 0;
-        request.arp_reply_count = 0;
-        request.udp_reply_count = 0;
-        request.uptime_beacon_count = 0;
-        udp_reply_count++;
         start_protocol_tx_request(
             request,
             tx_valid,

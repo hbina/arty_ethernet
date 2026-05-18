@@ -7,18 +7,10 @@
 #include "ethernet_packet_queue.h"
 #include "protocol_helpers.h"
 
-static const ap_uint<11> UDP_REPLY_PAYLOAD_BYTES =
-    IPV4_HEADER_BYTES + UDP_HEADER_BYTES + 8;
-static const ap_uint<16> UDP_REPLY_TOTAL_LEN =
-    IPV4_HEADER_BYTES + UDP_HEADER_BYTES + 8;
-static const ap_uint<16> UDP_REPLY_UDP_LEN = UDP_HEADER_BYTES + 8;
-
 enum ProtocolTxKind {
   PROTO_TX_NONE = 0,
-  PROTO_TX_ACK = 1,
   PROTO_TX_BEACON = 2,
-  PROTO_TX_ARP_REPLY = 3,
-  PROTO_TX_UDP_REPLY = 4
+  PROTO_TX_ARP_REPLY = 3
 };
 
 struct ProtocolTxRequest {
@@ -28,8 +20,6 @@ struct ProtocolTxRequest {
   ProtocolTxKind kind;
   ap_uint<48> arp_requester_mac;
   ap_uint<32> arp_requester_ip;
-  ap_uint<32> udp_requester_ip;
-  ap_uint<16> udp_requester_port;
   ap_uint<32> rx_packet_count;
   ap_uint<32> rx_queue_drop_count;
   ap_uint<32> rx_protocol_drop_count;
@@ -38,29 +28,6 @@ struct ProtocolTxRequest {
   ap_uint<32> udp_reply_count;
   ap_uint<32> uptime_beacon_count;
 };
-
-// Return one byte from the fixed ACK payload literal, ARTY_ACK.
-static ap_uint<8> ack_payload_literal_byte(ap_uint<4> index) {
-#pragma HLS INLINE
-  switch ((unsigned)index) {
-  case 0:
-    return 'A';
-  case 1:
-    return 'R';
-  case 2:
-    return 'T';
-  case 3:
-    return 'Y';
-  case 4:
-    return '_';
-  case 5:
-    return 'A';
-  case 6:
-    return 'C';
-  default:
-    return 'K';
-  }
-}
 
 static ap_uint<8> hex_digit_byte(ap_uint<4> value) {
 #pragma HLS INLINE
@@ -288,101 +255,13 @@ static ap_uint<8> beacon_payload_literal_byte(
   }
 }
 
-static ap_uint<16> ipv4_reply_checksum(ap_uint<32> dst_ip) {
-#pragma HLS INLINE
-  ap_uint<32> sum = 0;
-  sum += 0x4500;
-  sum += UDP_REPLY_TOTAL_LEN;
-  sum += 0x0000;
-  sum += 0x0000;
-  sum += (ap_uint<16>(IPV4_DEFAULT_TTL) << 8) | IPV4_PROTOCOL_UDP;
-  sum += FPGA_IP.range(31, 16);
-  sum += FPGA_IP.range(15, 0);
-  sum += dst_ip.range(31, 16);
-  sum += dst_ip.range(15, 0);
-  sum = (sum & 0xffff) + (sum >> 16);
-  sum = (sum & 0xffff) + (sum >> 16);
-  return ~sum;
-}
-
-static ap_uint<8> udp_reply_payload_byte(
-    ap_uint<6> index,
-    ap_uint<32> requester_ip,
-    ap_uint<16> requester_port) {
-#pragma HLS INLINE
-  ap_uint<16> checksum = ipv4_reply_checksum(requester_ip);
-
-  switch ((unsigned)index) {
-  case 0:
-    return 0x45;
-  case 1:
-    return 0x00;
-  case 2:
-    return UDP_REPLY_TOTAL_LEN.range(15, 8);
-  case 3:
-    return UDP_REPLY_TOTAL_LEN.range(7, 0);
-  case 4:
-  case 5:
-  case 6:
-  case 7:
-    return 0x00;
-  case 8:
-    return IPV4_DEFAULT_TTL;
-  case 9:
-    return IPV4_PROTOCOL_UDP;
-  case 10:
-    return checksum.range(15, 8);
-  case 11:
-    return checksum.range(7, 0);
-  case 12:
-    return FPGA_IP.range(31, 24);
-  case 13:
-    return FPGA_IP.range(23, 16);
-  case 14:
-    return FPGA_IP.range(15, 8);
-  case 15:
-    return FPGA_IP.range(7, 0);
-  case 16:
-    return requester_ip.range(31, 24);
-  case 17:
-    return requester_ip.range(23, 16);
-  case 18:
-    return requester_ip.range(15, 8);
-  case 19:
-    return requester_ip.range(7, 0);
-  case 20:
-    return UDP_FPGA_PORT.range(15, 8);
-  case 21:
-    return UDP_FPGA_PORT.range(7, 0);
-  case 22:
-    return requester_port.range(15, 8);
-  case 23:
-    return requester_port.range(7, 0);
-  case 24:
-    return UDP_REPLY_UDP_LEN.range(15, 8);
-  case 25:
-    return UDP_REPLY_UDP_LEN.range(7, 0);
-  case 26:
-  case 27:
-    return 0x00;
-  default:
-    return ack_payload_literal_byte(index - 28);
-  }
-}
-
 static ap_uint<11> protocol_tx_payload_len(ProtocolTxKind request_kind) {
 #pragma HLS INLINE
-  if (request_kind == PROTO_TX_ACK) {
-    return 8;
-  }
   if (request_kind == PROTO_TX_BEACON) {
     return 129;
   }
   if (request_kind == PROTO_TX_ARP_REPLY) {
     return ARP_PAYLOAD_BYTES;
-  }
-  if (request_kind == PROTO_TX_UDP_REPLY) {
-    return UDP_REPLY_PAYLOAD_BYTES;
   }
   return 0;
 }
@@ -398,18 +277,11 @@ protocol_tx_payload_byte(const ProtocolTxRequest &request, ap_uint<11> index) {
   ProtocolTxKind request_kind = request.kind;
   ap_uint<8> payload_byte = beacon_payload_literal_byte(index, request);
 
-  if (request_kind == PROTO_TX_ACK) {
-    payload_byte = ack_payload_literal_byte(index);
-  } else if (request_kind == PROTO_TX_ARP_REPLY) {
+  if (request_kind == PROTO_TX_ARP_REPLY) {
     payload_byte = arp_reply_payload_byte(
         index,
         request.arp_requester_mac,
         request.arp_requester_ip);
-  } else if (request_kind == PROTO_TX_UDP_REPLY) {
-    payload_byte = udp_reply_payload_byte(
-        index,
-        request.udp_requester_ip,
-        request.udp_requester_port);
   }
 
   return payload_byte;
@@ -447,8 +319,6 @@ static ProtocolTxRequest protocol_tx_beacon_request() {
   request.kind = PROTO_TX_BEACON;
   request.arp_requester_mac = 0;
   request.arp_requester_ip = 0;
-  request.udp_requester_ip = 0;
-  request.udp_requester_port = 0;
   request.rx_packet_count = 0;
   request.rx_queue_drop_count = 0;
   request.rx_protocol_drop_count = 0;
