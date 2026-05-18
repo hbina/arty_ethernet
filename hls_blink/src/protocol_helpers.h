@@ -51,4 +51,21 @@ static ap_uint<48> read_mac48(
          (ap_uint<48>(bytes[index + 4]) << 8) | bytes[index + 5];
 }
 
+// Return one byte of the 14-byte Ethernet header:
+// destination MAC, source MAC, then EtherType.
+static ap_uint<8>
+ethernet_header_byte(const EthHeader &header, ap_uint<4> index) {
+#pragma HLS INLINE
+  if (index < 6) {
+    return mac_byte(header.dst_mac, index);
+  }
+  if (index < 12) {
+    return mac_byte(header.src_mac, index - 6);
+  }
+  if (index == 12) {
+    return header.ethertype.range(15, 8);
+  }
+  return header.ethertype.range(7, 0);
+}
+
 #endif

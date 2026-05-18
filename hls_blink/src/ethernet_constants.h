@@ -18,7 +18,12 @@ static const ap_uint<32> BEACON_INTERVAL_CYCLES = 250000000;
 static const int MAX_ETH_PAYLOAD_BYTES_INT = 1500;
 static const ap_uint<11> MAX_ETH_PAYLOAD_BYTES = 1500;
 static const ap_uint<11> MIN_ETH_PAYLOAD_BYTES = 46;
+static const int ETH_HEADER_BYTES_INT = 14;
 static const ap_uint<5> ETH_HEADER_BYTES = 14;
+static const int TX_FRAME_BODY_BYTES_INT =
+    ETH_HEADER_BYTES_INT + MAX_ETH_PAYLOAD_BYTES_INT;
+static const ap_uint<11> MIN_ETH_FRAME_BODY_BYTES = 60;
+static const ap_uint<11> TX_FRAME_BODY_BYTES = TX_FRAME_BODY_BYTES_INT;
 static const ap_uint<6> IFG_NIBBLES = 24;
 
 struct EthHeader {

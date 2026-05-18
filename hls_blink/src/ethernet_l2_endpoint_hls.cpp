@@ -45,14 +45,13 @@ extern "C" void ethernet_l2_endpoint_hls(
   static ap_uint<3> rx_read_idx = 0;
   static ap_uint<32> rx_drop_count = 0;
 
-  static EthHeader tx_headers[TX_PACKET_SLOTS];
-  static ap_uint<11> tx_payload_lens[TX_PACKET_SLOTS];
+  static ap_uint<11> tx_lens[TX_PACKET_SLOTS];
   static bool tx_valid[TX_PACKET_SLOTS] = {false};
 #pragma HLS ARRAY_PARTITION variable = tx_valid complete
 #pragma HLS DEPENDENCE variable = tx_valid inter false
-  static ap_uint<8> tx_payloads[TX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT];
-#pragma HLS ARRAY_PARTITION variable = tx_payloads complete dim = 1
-#pragma HLS BIND_STORAGE variable = tx_payloads type = ram_t2p impl = bram
+  static ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT];
+#pragma HLS ARRAY_PARTITION variable = tx_bytes complete dim = 1
+#pragma HLS BIND_STORAGE variable = tx_bytes type = ram_t2p impl = bram
   static ap_uint<2> tx_write_idx = 0;
   static ap_uint<2> tx_read_idx = 0;
   static ap_uint<32> tx_drop_count = 0;
@@ -77,19 +76,17 @@ extern "C" void ethernet_l2_endpoint_hls(
       rx_truncated,
       rx_payloads,
       rx_read_idx,
-      tx_headers,
-      tx_payload_lens,
+      tx_lens,
       tx_valid,
-      tx_payloads,
+      tx_bytes,
       tx_write_idx,
       tx_drop_count,
       rx_accept_toggle);
 
   ethernet_tx_queue_step(
-      tx_headers,
-      tx_payload_lens,
+      tx_lens,
       tx_valid,
-      tx_payloads,
+      tx_bytes,
       tx_read_idx,
       eth_tx_en,
       eth_txd,

@@ -30,62 +30,26 @@ static ap_uint<32> crc32_next_byte(ap_uint<32> crc_in, ap_uint<8> data_in) {
   return crc;
 }
 
-// Return one byte of the 14-byte Ethernet header:
-// destination MAC, source MAC, then EtherType.
-static ap_uint<8>
-ethernet_header_byte(const EthHeader &header, ap_uint<4> index) {
-#pragma HLS INLINE
-  if (index < 6) {
-    return mac_byte(header.dst_mac, index);
-  }
-  if (index < 12) {
-    return mac_byte(header.src_mac, index - 6);
-  }
-  if (index == 12) {
-    return header.ethertype.range(15, 8);
-  }
-  return header.ethertype.range(7, 0);
-}
-
-// Read one TX payload byte from BRAM. Bytes past payload_len are zero so the
-// framer can naturally emit Ethernet minimum-frame padding.
-static ap_uint<8> tx_payload_byte(
-    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+// Read one TX frame-body byte from BRAM. Bytes past frame_body_len are zero so
+// the framer can naturally emit Ethernet minimum-frame padding.
+static ap_uint<8> tx_frame_body_byte(
+    ap_uint<8> tx_frame_body_buf[TX_FRAME_BODY_BYTES_INT],
     ap_uint<11> index,
-    ap_uint<11> payload_len) {
+    ap_uint<11> frame_body_len) {
 #pragma HLS INLINE
-  if (index >= payload_len || index >= MAX_ETH_PAYLOAD_BYTES) {
+  if (index >= frame_body_len || index >= TX_FRAME_BODY_BYTES) {
     return 0;
   }
-  return tx_payload_buf[index];
-}
-
-// Return one byte of the Ethernet frame body, excluding preamble/SFD and FCS.
-// The body is header first, then payload bytes or zero padding.
-static ap_uint<8> ethernet_frame_body_byte(
-    const EthHeader &header,
-    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<11> payload_len,
-    ap_uint<11> index) {
-#pragma HLS INLINE
-  if (index < ETH_HEADER_BYTES) {
-    return ethernet_header_byte(header, index);
-  }
-
-  ap_uint<11> payload_index = index - ETH_HEADER_BYTES;
-  return tx_payload_byte(tx_payload_buf, payload_index, payload_len);
+  return tx_frame_body_buf[index];
 }
 
 // Generic Ethernet TX framer.
-// Given header metadata and a payload buffer, it emits preamble/SFD, Ethernet
-// header, payload, minimum-frame padding, FCS, and IFG. It is reusable by
-// future ARP/IPv4/UDP/TCP producers because it only depends on metadata +
-// payload RAM.
+// Given a complete Ethernet frame body buffer, it emits preamble/SFD, body
+// bytes, minimum-frame padding, FCS, and IFG.
 static void ethernet_tx_framer_step(
     bool start_request,
-    const EthHeader &start_header,
-    ap_uint<11> start_payload_len,
-    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<11> start_len,
+    ap_uint<8> tx_frame_body_buf[TX_FRAME_BODY_BYTES_INT],
     ap_uint<1> &eth_tx_en,
     ap_uint<4> &eth_txd,
     ap_uint<1> &tx_frame_toggle,
@@ -99,8 +63,7 @@ static void ethernet_tx_framer_step(
   static ap_uint<6> tx_ifg_count = 0;
   static ap_uint<32> tx_crc = 0xffffffff;
   static ap_uint<32> tx_fcs = 0;
-  static EthHeader tx_header = {0, FPGA_MAC, CUSTOM_ETHERTYPE};
-  static ap_uint<11> tx_payload_len = 0;
+  static ap_uint<11> tx_len = 0;
   static ap_uint<11> tx_frame_body_len = 0;
   static bool tx_frame = false;
 
@@ -120,14 +83,12 @@ static void ethernet_tx_framer_step(
     tx_idle = true;
 
     if (start_request) {
-      // Latch request metadata at frame start. The payload body is padded
-      // to Ethernet's 46-byte minimum when needed.
-      tx_header = start_header;
-      tx_payload_len = start_payload_len;
-      tx_frame_body_len =
-          ETH_HEADER_BYTES + ((start_payload_len < MIN_ETH_PAYLOAD_BYTES)
-                                  ? MIN_ETH_PAYLOAD_BYTES
-                                  : start_payload_len);
+      // Latch request length at frame start. The frame body already includes
+      // the Ethernet header and is padded to Ethernet's 60-byte minimum.
+      tx_len = start_len;
+      tx_frame_body_len = (start_len < MIN_ETH_FRAME_BODY_BYTES)
+                              ? MIN_ETH_FRAME_BODY_BYTES
+                              : start_len;
       tx_state = TX_PREAMBLE;
       tx_idle = false;
     }
@@ -158,11 +119,8 @@ static void ethernet_tx_framer_step(
   case TX_DATA: {
     // Emit header/payload/padding bytes and fold each complete byte into FCS.
     tx_active = 1;
-    ap_uint<8> out_byte = ethernet_frame_body_byte(
-        tx_header,
-        tx_payload_buf,
-        tx_payload_len,
-        tx_byte_index);
+    ap_uint<8> out_byte =
+        tx_frame_body_byte(tx_frame_body_buf, tx_byte_index, tx_len);
     mii_tx_emit_byte_step(
         out_byte,
         tx_nibble_phase,

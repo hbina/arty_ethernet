@@ -5,12 +5,33 @@
 #include "arp.h"
 #include "ethernet_constants.h"
 #include "ethernet_packet_queue.h"
+#include "protocol_helpers.h"
 
 static const ap_uint<11> UDP_REPLY_PAYLOAD_BYTES =
     IPV4_HEADER_BYTES + UDP_HEADER_BYTES + 8;
 static const ap_uint<16> UDP_REPLY_TOTAL_LEN =
     IPV4_HEADER_BYTES + UDP_HEADER_BYTES + 8;
 static const ap_uint<16> UDP_REPLY_UDP_LEN = UDP_HEADER_BYTES + 8;
+
+enum ProtocolTxKind {
+  PROTO_TX_NONE = 0,
+  PROTO_TX_ACK = 1,
+  PROTO_TX_BEACON = 2,
+  PROTO_TX_ARP_REPLY = 3,
+  PROTO_TX_UDP_REPLY = 4
+};
+
+struct ProtocolTxRequest {
+  bool valid;
+  EthHeader header;
+  ap_uint<11> len;
+  ProtocolTxKind kind;
+  ap_uint<48> arp_requester_mac;
+  ap_uint<32> arp_requester_ip;
+  ap_uint<32> udp_requester_ip;
+  ap_uint<16> udp_requester_port;
+  ap_uint<32> beacon_rx_count;
+};
 
 // Return one byte from the fixed ACK payload literal, ARTY_ACK.
 static ap_uint<8> ack_payload_literal_byte(ap_uint<4> index) {
@@ -179,84 +200,82 @@ static ap_uint<8> udp_reply_payload_byte(
   }
 }
 
-static ap_uint<11> tx_request_payload_len(TxRequestKind request_kind) {
+static ap_uint<11> protocol_tx_payload_len(ProtocolTxKind request_kind) {
 #pragma HLS INLINE
-  if (request_kind == TX_REQ_ACK) {
+  if (request_kind == PROTO_TX_ACK) {
     return 8;
   }
-  if (request_kind == TX_REQ_BEACON) {
+  if (request_kind == PROTO_TX_BEACON) {
     return 23;
   }
-  if (request_kind == TX_REQ_ARP_REPLY) {
+  if (request_kind == PROTO_TX_ARP_REPLY) {
     return ARP_PAYLOAD_BYTES;
   }
-  if (request_kind == TX_REQ_UDP_REPLY) {
+  if (request_kind == PROTO_TX_UDP_REPLY) {
     return UDP_REPLY_PAYLOAD_BYTES;
   }
   return 0;
 }
 
-static EthHeader tx_request_header(const TxRequest &request) {
+static ap_uint<11> protocol_tx_frame_body_len(ProtocolTxKind request_kind) {
 #pragma HLS INLINE
-  EthHeader header;
-  header.src_mac = FPGA_MAC;
-  header.dst_mac = BROADCAST_MAC;
-  header.ethertype = CUSTOM_ETHERTYPE;
+  return ETH_HEADER_BYTES + protocol_tx_payload_len(request_kind);
+}
 
-  if (request.request_kind == TX_REQ_ACK) {
-    header.dst_mac = request.header.dst_mac;
-  } else if (request.request_kind == TX_REQ_ARP_REPLY) {
-    header.dst_mac = request.arp_requester_mac;
-    header.ethertype = ARP_ETHERTYPE;
-  } else if (request.request_kind == TX_REQ_UDP_REPLY) {
-    header.dst_mac = request.header.dst_mac;
-    header.ethertype = IPV4_ETHERTYPE;
+static ap_uint<8>
+protocol_tx_payload_byte(const ProtocolTxRequest &request, ap_uint<11> index) {
+#pragma HLS INLINE
+  ProtocolTxKind request_kind = request.kind;
+  ap_uint<8> payload_byte =
+      beacon_payload_literal_byte(index, request.beacon_rx_count);
+
+  if (request_kind == PROTO_TX_ACK) {
+    payload_byte = ack_payload_literal_byte(index);
+  } else if (request_kind == PROTO_TX_ARP_REPLY) {
+    payload_byte = arp_reply_payload_byte(
+        index,
+        request.arp_requester_mac,
+        request.arp_requester_ip);
+  } else if (request_kind == PROTO_TX_UDP_REPLY) {
+    payload_byte = udp_reply_payload_byte(
+        index,
+        request.udp_requester_ip,
+        request.udp_requester_port);
   }
 
-  return header;
+  return payload_byte;
 }
 
 // Write one byte of the currently selected fixed response into a TX slot.
 // This intentionally writes one byte per top-level call so the endpoint can
 // remain a one-cycle initiation-interval pipeline.
-static void prepare_tx_slot_payload_step(
-    ap_uint<8> tx_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT],
-    const TxRequest &request,
-    ap_uint<6> payload_index,
+static void prepare_tx_slot_frame_body_step(
+    ap_uint<8> tx_frame_body_buf[TX_FRAME_BODY_BYTES_INT],
+    const ProtocolTxRequest &request,
+    ap_uint<11> frame_body_index,
     bool &done) {
 #pragma HLS INLINE
-  TxRequestKind request_kind = request.request_kind;
-  ap_uint<11> payload_len = tx_request_payload_len(request_kind);
-  ap_uint<8> payload_byte =
-      beacon_payload_literal_byte(payload_index, request.beacon_rx_count);
-
-  if (request_kind == TX_REQ_ACK) {
-    payload_byte = ack_payload_literal_byte(payload_index);
-  } else if (request_kind == TX_REQ_ARP_REPLY) {
-    payload_byte = arp_reply_payload_byte(
-        payload_index,
-        request.arp_requester_mac,
-        request.arp_requester_ip);
-  } else if (request_kind == TX_REQ_UDP_REPLY) {
-    payload_byte = udp_reply_payload_byte(
-        payload_index,
-        request.udp_requester_ip,
-        request.udp_requester_port);
+  ap_uint<8> frame_body_byte = 0;
+  if (frame_body_index < ETH_HEADER_BYTES) {
+    frame_body_byte = ethernet_header_byte(request.header, frame_body_index);
+  } else {
+    ap_uint<11> payload_index = frame_body_index - ETH_HEADER_BYTES;
+    frame_body_byte = protocol_tx_payload_byte(request, payload_index);
   }
 
-  tx_payload_buf[payload_index] = payload_byte;
-  done = (payload_len == 0) || (payload_index == payload_len - 1);
+  tx_frame_body_buf[frame_body_index] = frame_body_byte;
+  done = (request.len == 0) || (frame_body_index == request.len - 1);
 }
 
-static TxRequest beacon_request() {
+static ProtocolTxRequest protocol_tx_beacon_request() {
 #pragma HLS INLINE
-  TxRequest request;
+  ProtocolTxRequest request;
   request.valid = true;
   request.header.dst_mac = BROADCAST_MAC;
   request.header.src_mac = FPGA_MAC;
   request.header.ethertype = CUSTOM_ETHERTYPE;
-  request.payload_len = tx_request_payload_len(TX_REQ_BEACON);
-  request.request_kind = TX_REQ_BEACON;
+  request.len = protocol_tx_frame_body_len(PROTO_TX_BEACON);
+  request.kind = PROTO_TX_BEACON;
   request.arp_requester_mac = 0;
   request.arp_requester_ip = 0;
   request.udp_requester_ip = 0;

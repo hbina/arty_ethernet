@@ -13,19 +13,23 @@ extern "C" void ethernet_l2_endpoint_hls_test_frame(
     ap_uint<4> &eth_txd,
     ap_uint<1> &tx_frame_toggle,
     ap_uint<1> &tx_active) {
-  static ap_uint<8> test_payload_buf[MAX_ETH_PAYLOAD_BYTES_INT];
+  static ap_uint<8> test_frame_body_buf[TX_FRAME_BODY_BYTES_INT];
   static bool initialized = false;
   static bool started = false;
 
   if (!initialized) {
-    // Fill test payload with a deterministic byte ramp: 0, 1, 2, ...
-    for (ap_uint<11> i = 0; i < MAX_ETH_PAYLOAD_BYTES; ++i) {
-      test_payload_buf[i] = i.range(7, 0);
+    EthHeader header = {dst_mac, FPGA_MAC, ethertype};
+    for (ap_uint<11> i = 0; i < TX_FRAME_BODY_BYTES; ++i) {
+      if (i < ETH_HEADER_BYTES) {
+        test_frame_body_buf[i] = ethernet_header_byte(header, i);
+      } else {
+        ap_uint<11> payload_index = i - ETH_HEADER_BYTES;
+        test_frame_body_buf[i] = payload_index.range(7, 0);
+      }
     }
     initialized = true;
   }
 
-  EthHeader header = {dst_mac, FPGA_MAC, ethertype};
   bool tx_idle = false;
   bool start_request = !started && (cycle == 0);
   if (start_request) {
@@ -34,9 +38,8 @@ extern "C" void ethernet_l2_endpoint_hls_test_frame(
 
   ethernet_tx_framer_step(
       start_request,
-      header,
-      payload_len,
-      test_payload_buf,
+      ETH_HEADER_BYTES + payload_len,
+      test_frame_body_buf,
       eth_tx_en,
       eth_txd,
       tx_frame_toggle,

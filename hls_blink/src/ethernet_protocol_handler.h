@@ -15,12 +15,12 @@ enum ProtocolState {
 };
 
 static void start_protocol_tx_request(
-    const TxRequest &request,
+    const ProtocolTxRequest &request,
     bool tx_valid[TX_PACKET_SLOTS],
     ap_uint<2> tx_write_idx,
     bool &preparing_payload,
-    TxRequest &prepare_request,
-    ap_uint<6> &prepare_index,
+    ProtocolTxRequest &prepare_request,
+    ap_uint<11> &prepare_index,
     ap_uint<2> &prepare_tx_idx,
     ap_uint<32> &tx_drop_count) {
 #pragma HLS INLINE
@@ -49,10 +49,9 @@ static void protocol_queue_step(
     bool rx_truncated[RX_PACKET_SLOTS],
     ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
     ap_uint<3> &rx_read_idx,
-    EthHeader tx_headers[TX_PACKET_SLOTS],
-    ap_uint<11> tx_payload_lens[TX_PACKET_SLOTS],
+    ap_uint<11> tx_lens[TX_PACKET_SLOTS],
     bool tx_valid[TX_PACKET_SLOTS],
-    ap_uint<8> tx_payloads[TX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
+    ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT],
     ap_uint<2> &tx_write_idx,
     ap_uint<32> &tx_drop_count,
     ap_uint<1> &rx_accept_toggle) {
@@ -60,18 +59,18 @@ static void protocol_queue_step(
   static ap_uint<32> beacon_count = BEACON_INTERVAL_CYCLES - 4;
   static ProtocolState protocol_state = PROTO_IDLE;
   static bool preparing_payload = false;
-  static TxRequest prepare_request = {
+  static ProtocolTxRequest prepare_request = {
       false,
       {0, FPGA_MAC, CUSTOM_ETHERTYPE},
       0,
-      TX_REQ_NONE,
+      PROTO_TX_NONE,
       0,
       0,
       0,
       0,
       0,
   };
-  static ap_uint<6> prepare_index = 0;
+  static ap_uint<11> prepare_index = 0;
   static ap_uint<2> prepare_tx_idx = 0;
   static ap_uint<32> rx_protocol_drop_count = 0;
   static ap_uint<32> rx_packet_count = 0;
@@ -123,12 +122,13 @@ static void protocol_queue_step(
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
       } else if (dest_ok && header.ethertype == CUSTOM_ETHERTYPE) {
-        TxRequest request;
+        ProtocolTxRequest request;
         request.valid = true;
-        request.header = header;
         request.header.dst_mac = header.src_mac;
-        request.payload_len = tx_request_payload_len(TX_REQ_ACK);
-        request.request_kind = TX_REQ_ACK;
+        request.header.src_mac = FPGA_MAC;
+        request.header.ethertype = CUSTOM_ETHERTYPE;
+        request.len = protocol_tx_frame_body_len(PROTO_TX_ACK);
+        request.kind = PROTO_TX_ACK;
         request.arp_requester_mac = 0;
         request.arp_requester_ip = 0;
         request.udp_requester_ip = 0;
@@ -186,7 +186,7 @@ static void protocol_queue_step(
         rx_read_idx = read_idx + 1;
       }
     } else if (beacon_tick) {
-      TxRequest request = beacon_request();
+      ProtocolTxRequest request = protocol_tx_beacon_request();
       request.beacon_rx_count = rx_packet_count;
       start_protocol_tx_request(
           request,
@@ -281,11 +281,13 @@ static void protocol_queue_step(
                        (parse_arp_opcode == ARP_OPCODE_REQUEST) &&
                        (parse_arp_target_ip == FPGA_IP);
       if (arp_valid) {
-        TxRequest request;
+        ProtocolTxRequest request;
         request.valid = true;
-        request.header = parse_header;
-        request.payload_len = tx_request_payload_len(TX_REQ_ARP_REPLY);
-        request.request_kind = TX_REQ_ARP_REPLY;
+        request.header.dst_mac = parse_arp_sender_mac;
+        request.header.src_mac = FPGA_MAC;
+        request.header.ethertype = ARP_ETHERTYPE;
+        request.len = protocol_tx_frame_body_len(PROTO_TX_ARP_REPLY);
+        request.kind = PROTO_TX_ARP_REPLY;
         request.arp_requester_mac = parse_arp_sender_mac;
         request.arp_requester_ip = parse_arp_sender_ip;
         request.udp_requester_ip = 0;
@@ -392,12 +394,13 @@ static void protocol_queue_step(
           (parse_udp_len <= parse_ipv4_total_len - IPV4_HEADER_BYTES) &&
           (parse_udp_dst_port == UDP_FPGA_PORT);
       if (ipv4_valid && udp_valid) {
-        TxRequest request;
+        ProtocolTxRequest request;
         request.valid = true;
-        request.header = parse_header;
         request.header.dst_mac = parse_header.src_mac;
-        request.payload_len = tx_request_payload_len(TX_REQ_UDP_REPLY);
-        request.request_kind = TX_REQ_UDP_REPLY;
+        request.header.src_mac = FPGA_MAC;
+        request.header.ethertype = IPV4_ETHERTYPE;
+        request.len = protocol_tx_frame_body_len(PROTO_TX_UDP_REPLY);
+        request.kind = PROTO_TX_UDP_REPLY;
         request.arp_requester_mac = 0;
         request.arp_requester_ip = 0;
         request.udp_requester_ip = parse_ipv4_src_ip;
@@ -425,19 +428,18 @@ static void protocol_queue_step(
   if (preparing_payload) {
     bool prepare_done = false;
     unsigned prepare_tx_idx_int = prepare_tx_idx;
-    prepare_tx_slot_payload_step(
-        tx_payloads[prepare_tx_idx_int],
+    prepare_tx_slot_frame_body_step(
+        tx_bytes[prepare_tx_idx_int],
         prepare_request,
         prepare_index,
         prepare_done);
     if (prepare_done) {
-      tx_headers[prepare_tx_idx_int] = tx_request_header(prepare_request);
-      tx_payload_lens[prepare_tx_idx_int] = prepare_request.payload_len;
+      tx_lens[prepare_tx_idx_int] = prepare_request.len;
       tx_valid[prepare_tx_idx_int] = true;
       tx_write_idx = prepare_tx_idx + 1;
       preparing_payload = false;
       prepare_request.valid = false;
-      prepare_request.request_kind = TX_REQ_NONE;
+      prepare_request.kind = PROTO_TX_NONE;
     } else {
       prepare_index++;
     }
