@@ -1,3 +1,4 @@
+#include "../src/ethernet_periodic_timers.h"
 #include "../src/ethernet_rx.h"
 #include "../src/ethernet_tx_payloads.h"
 #include "../src/packet_views.h"
@@ -72,9 +73,6 @@ static std::vector<uint8_t> collect_tx_frame(unsigned max_cycles) {
       }
       low = !low;
     } else if (in_frame) {
-      for (unsigned drain = 0; drain < 64; ++drain) {
-        step(0, 0, 0, tx_en, txd, rx_accept, tx_frame, rx_active, tx_active);
-      }
       break;
     }
   }
@@ -274,6 +272,25 @@ static std::vector<uint8_t> bytes_from_string(const std::string &text) {
   return std::vector<uint8_t>(text.begin(), text.end());
 }
 
+static std::vector<uint8_t>
+tx_frame_from_request(const ProtocolTxRequest &request) {
+  ap_uint<8> frame_body[TX_FRAME_BODY_BYTES_INT];
+  bool done = false;
+  for (ap_uint<11> i = 0; i < request.len && !done; ++i) {
+    prepare_tx_slot_frame_body_step(frame_body, request, i, done);
+  }
+
+  std::vector<uint8_t> frame = {0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5};
+  for (unsigned i = 0; i < request.len; ++i) {
+    frame.push_back((uint8_t)frame_body[i]);
+  }
+  for (unsigned i = request.len; i < MIN_ETH_FRAME_BODY_BYTES; ++i) {
+    frame.push_back(0);
+  }
+  append_eth_fcs(frame);
+  return frame;
+}
+
 static std::vector<uint8_t> arp_request_frame(
     const std::vector<uint8_t> &dst,
     const std::vector<uint8_t> &src,
@@ -309,8 +326,9 @@ static std::vector<uint8_t> custom_request_frame(
 
 static void assert_valid_arp_reply(
     const std::vector<uint8_t> &frame,
-    const std::vector<uint8_t> &requester_mac,
-    const std::vector<uint8_t> &requester_ip) {
+    const std::vector<uint8_t> &target_mac,
+    const std::vector<uint8_t> &target_ip,
+    bool broadcast_ethernet) {
   const unsigned body_len = 14 + 46;
   if (frame.size() != 8 + body_len + 4) {
     std::fprintf(
@@ -328,7 +346,7 @@ static void assert_valid_arp_reply(
 
   const unsigned eth = 8;
   for (unsigned i = 0; i < 6; ++i) {
-    assert(frame[eth + i] == requester_mac[i]);
+    assert(frame[eth + i] == target_mac[i]);
   }
 
   const uint8_t fpga_mac[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
@@ -338,6 +356,11 @@ static void assert_valid_arp_reply(
 
   assert(frame[eth + 12] == 0x08);
   assert(frame[eth + 13] == 0x06);
+  if (broadcast_ethernet) {
+    for (unsigned i = 0; i < 6; ++i) {
+      assert(frame[eth + i] == 0xff);
+    }
+  }
 
   const unsigned arp = eth + 14;
   assert(frame[arp + 0] == 0x00);
@@ -358,16 +381,31 @@ static void assert_valid_arp_reply(
   assert(frame[arp + 17] == 100);
 
   for (unsigned i = 0; i < 6; ++i) {
-    assert(frame[arp + 18 + i] == requester_mac[i]);
+    assert(frame[arp + 18 + i] == target_mac[i]);
   }
   for (unsigned i = 0; i < 4; ++i) {
-    assert(frame[arp + 24 + i] == requester_ip[i]);
+    assert(frame[arp + 24 + i] == target_ip[i]);
   }
   for (unsigned i = 28; i < 46; ++i) {
     assert(frame[arp + i] == 0x00);
   }
 
   assert_fcs(frame, eth, body_len);
+}
+
+static void assert_valid_unicast_arp_reply(
+    const std::vector<uint8_t> &frame,
+    const std::vector<uint8_t> &requester_mac,
+    const std::vector<uint8_t> &requester_ip) {
+  assert_valid_arp_reply(frame, requester_mac, requester_ip, false);
+}
+
+static void assert_valid_gratuitous_arp(const std::vector<uint8_t> &frame) {
+  assert_valid_arp_reply(
+      frame,
+      {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+      {192, 168, 1, 100},
+      true);
 }
 
 static void assert_valid_test_frame(
@@ -573,18 +611,55 @@ static void test_beacon_payload_fields() {
       "RXP=00000001 TXD=00000002 ARP=00000001 UDP=00000001 UP=00000001");
 }
 
+static void test_gratuitous_arp_request_builder() {
+  ProtocolTxRequest request = protocol_tx_gratuitous_arp_request();
+  assert_valid_gratuitous_arp(tx_frame_from_request(request));
+}
+
+static void test_periodic_tx_timer_ticks() {
+  PeriodicTxTicks ticks = periodic_tx_timer_step();
+  assert(!ticks.beacon_tick);
+  assert(!ticks.gratuitous_arp_tick);
+
+  ticks = periodic_tx_timer_step();
+  assert(!ticks.beacon_tick);
+  assert(!ticks.gratuitous_arp_tick);
+
+  ticks = periodic_tx_timer_step();
+  assert(!ticks.beacon_tick);
+  assert(!ticks.gratuitous_arp_tick);
+
+  ticks = periodic_tx_timer_step();
+  assert(!ticks.beacon_tick);
+  assert(!ticks.gratuitous_arp_tick);
+
+  ticks = periodic_tx_timer_step();
+  assert(!ticks.beacon_tick);
+  assert(!ticks.gratuitous_arp_tick);
+
+  ap_uint<32> beacon_count = BEACON_INTERVAL_CYCLES - 1;
+  assert(periodic_counter_tick(BEACON_INTERVAL_CYCLES, beacon_count));
+  assert(beacon_count == 0);
+  assert(!periodic_counter_tick(BEACON_INTERVAL_CYCLES, beacon_count));
+  assert(beacon_count == 1);
+
+  ap_uint<32> gratuitous_arp_count = GRATUITOUS_ARP_INTERVAL_CYCLES - 1;
+  assert(periodic_counter_tick(
+      GRATUITOUS_ARP_INTERVAL_CYCLES,
+      gratuitous_arp_count));
+  assert(gratuitous_arp_count == 0);
+  assert(!periodic_counter_tick(
+      GRATUITOUS_ARP_INTERVAL_CYCLES,
+      gratuitous_arp_count));
+  assert(gratuitous_arp_count == 1);
+}
+
 int main() {
   ap_uint<1> tx_en = 0, rx_accept = 0, tx_frame = 0, rx_active = 0,
              tx_active = 0;
   ap_uint<4> txd = 0;
 
-  std::vector<uint8_t> beacon = collect_tx_frame(512);
-  assert_valid_tx_frame(
-      beacon,
-      {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-      bytes_from_string("ARTY IP=192.168.001.100 MAC=020000000001 RX=00000000 "
-                        "RXQ=00000000 RXP=00000000 TXD=00000000 ARP=00000000 "
-                        "UDP=00000000 UP=00000000"));
+  assert_no_tx_frame(512);
 
   for (int i = 0; i < 16; ++i) {
     step(0, 0, 0, tx_en, txd, rx_accept, tx_frame, rx_active, tx_active);
@@ -629,7 +704,7 @@ int main() {
       host_ip,
       fpga_ip));
   std::vector<uint8_t> arp_reply = collect_tx_frame(768);
-  assert_valid_arp_reply(arp_reply, host_mac, host_ip);
+  assert_valid_unicast_arp_reply(arp_reply, host_mac, host_ip);
 
   send_rx_frame(arp_request_frame(
       {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
@@ -675,6 +750,8 @@ int main() {
   test_ipv4_view();
   test_udp_view();
   test_beacon_payload_fields();
+  test_gratuitous_arp_request_builder();
+  test_periodic_tx_timer_ticks();
 
   return 0;
 }

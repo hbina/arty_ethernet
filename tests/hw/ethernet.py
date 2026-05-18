@@ -10,9 +10,11 @@ from dataclasses import dataclass
 FPGA_MAC = bytes.fromhex("020000000001")
 BROADCAST_MAC = bytes.fromhex("ffffffffffff")
 CUSTOM_ETHERTYPE = 0x88B5
+ARP_ETHERTYPE = 0x0806
 WRONG_ETHERTYPE = 0x88B6
 ARTY_BEACON_PREFIX = b"ARTY IP=192.168.001.100 MAC=020000000001 "
 ARTY_ACK = b"ARTY_ACK"
+FPGA_IP = "192.168.1.100"
 
 ETH_P_ALL = 0x0003
 MIN_ETH_PAYLOAD = 46
@@ -75,6 +77,19 @@ def build_wrong_destination_probe(src_mac, payload=b"pytest_wrong_dest"):
     return build_frame(wrong_dst, src_mac, payload, CUSTOM_ETHERTYPE)
 
 
+def build_arp_request(src_mac, src_ip, target_ip=FPGA_IP):
+    src_ip_bytes = socket.inet_aton(src_ip)
+    target_ip_bytes = socket.inet_aton(target_ip)
+    payload = (
+        struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1)
+        + src_mac
+        + src_ip_bytes
+        + (b"\x00" * 6)
+        + target_ip_bytes
+    )
+    return build_frame(BROADCAST_MAC, src_mac, payload, ARP_ETHERTYPE)
+
+
 def parse_frame(frame):
     if len(frame) < 14:
         raise ValueError(f"short Ethernet frame: {len(frame)} bytes")
@@ -87,6 +102,21 @@ def parse_frame(frame):
     )
 
 
+def parse_arp_payload(payload):
+    if len(payload) < 28:
+        return None
+    hw_type, proto_type, hw_len, proto_len, opcode = struct.unpack("!HHBBH", payload[:8])
+    if hw_type != 1 or proto_type != 0x0800 or hw_len != 6 or proto_len != 4:
+        return None
+    return {
+        "opcode": opcode,
+        "sender_mac": payload[8:14],
+        "sender_ip": socket.inet_ntoa(payload[14:18]),
+        "target_mac": payload[18:24],
+        "target_ip": socket.inet_ntoa(payload[24:28]),
+    }
+
+
 def short_hex(frame, limit=64):
     data = frame[:limit]
     suffix = "..." if len(frame) > limit else ""
@@ -97,6 +127,38 @@ def describe_frame(parsed):
     return (
         f"{mac_text(parsed.src_mac)} -> {mac_text(parsed.dst_mac)} "
         f"ethertype=0x{parsed.ethertype:04x} payload={parsed.payload!r}"
+    )
+
+
+def is_gratuitous_arp_reply(parsed):
+    if (
+        parsed.src_mac != FPGA_MAC
+        or parsed.dst_mac != BROADCAST_MAC
+        or parsed.ethertype != ARP_ETHERTYPE
+    ):
+        return False
+    arp = parse_arp_payload(parsed.payload)
+    return (
+        arp is not None
+        and arp["opcode"] == 2
+        and arp["sender_mac"] == FPGA_MAC
+        and arp["sender_ip"] == FPGA_IP
+        and arp["target_mac"] == BROADCAST_MAC
+        and arp["target_ip"] == FPGA_IP
+    )
+
+
+def is_arp_reply_to(parsed, dst_mac, dst_ip):
+    if parsed.src_mac != FPGA_MAC or parsed.dst_mac != dst_mac or parsed.ethertype != ARP_ETHERTYPE:
+        return False
+    arp = parse_arp_payload(parsed.payload)
+    return (
+        arp is not None
+        and arp["opcode"] == 2
+        and arp["sender_mac"] == FPGA_MAC
+        and arp["sender_ip"] == FPGA_IP
+        and arp["target_mac"] == dst_mac
+        and arp["target_ip"] == dst_ip
     )
 
 
@@ -178,7 +240,7 @@ def expect_frame(raw_eth, timeout, predicate, expected):
         if predicate(parsed):
             return parsed
 
-        if parsed.ethertype == CUSTOM_ETHERTYPE or parsed.src_mac == FPGA_MAC:
+        if parsed.ethertype in (CUSTOM_ETHERTYPE, ARP_ETHERTYPE) or parsed.src_mac == FPGA_MAC:
             mismatches.append((parsed, frame))
             mismatches = mismatches[-8:]
 

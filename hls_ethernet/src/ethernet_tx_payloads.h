@@ -10,7 +10,8 @@
 enum ProtocolTxKind {
   PROTO_TX_NONE = 0,
   PROTO_TX_BEACON = 2,
-  PROTO_TX_ARP_REPLY = 3
+  PROTO_TX_ARP_REPLY = 3,
+  PROTO_TX_GRATUITOUS_ARP = 4
 };
 
 struct ProtocolTxRequest {
@@ -260,7 +261,8 @@ static ap_uint<11> protocol_tx_payload_len(ProtocolTxKind request_kind) {
   if (request_kind == PROTO_TX_BEACON) {
     return 129;
   }
-  if (request_kind == PROTO_TX_ARP_REPLY) {
+  if (request_kind == PROTO_TX_ARP_REPLY ||
+      request_kind == PROTO_TX_GRATUITOUS_ARP) {
     return ARP_PAYLOAD_BYTES;
   }
   return 0;
@@ -277,7 +279,8 @@ protocol_tx_payload_byte(const ProtocolTxRequest &request, ap_uint<11> index) {
   ProtocolTxKind request_kind = request.kind;
   ap_uint<8> payload_byte = beacon_payload_literal_byte(index, request);
 
-  if (request_kind == PROTO_TX_ARP_REPLY) {
+  if (request_kind == PROTO_TX_ARP_REPLY ||
+      request_kind == PROTO_TX_GRATUITOUS_ARP) {
     payload_byte = arp_reply_payload_byte(
         index,
         request.arp_requester_mac,
@@ -319,6 +322,27 @@ static ProtocolTxRequest protocol_tx_beacon_request() {
   request.kind = PROTO_TX_BEACON;
   request.arp_requester_mac = 0;
   request.arp_requester_ip = 0;
+  request.rx_packet_count = 0;
+  request.rx_queue_drop_count = 0;
+  request.rx_protocol_drop_count = 0;
+  request.tx_drop_count = 0;
+  request.arp_reply_count = 0;
+  request.udp_reply_count = 0;
+  request.uptime_beacon_count = 0;
+  return request;
+}
+
+static ProtocolTxRequest protocol_tx_gratuitous_arp_request() {
+#pragma HLS INLINE
+  ProtocolTxRequest request;
+  request.valid = true;
+  request.header.dst_mac = BROADCAST_MAC;
+  request.header.src_mac = FPGA_MAC;
+  request.header.ethertype = ARP_ETHERTYPE;
+  request.len = protocol_tx_frame_body_len(PROTO_TX_GRATUITOUS_ARP);
+  request.kind = PROTO_TX_GRATUITOUS_ARP;
+  request.arp_requester_mac = BROADCAST_MAC;
+  request.arp_requester_ip = FPGA_IP;
   request.rx_packet_count = 0;
   request.rx_queue_drop_count = 0;
   request.rx_protocol_drop_count = 0;

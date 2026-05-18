@@ -75,11 +75,11 @@ extern "C" void ethernet_l2_endpoint_hls(
       rx_valid,
       rx_truncated,
       rx_payloads,
-      rx_read_idx,
       rx_drop_count,
       tx_lens,
       tx_valid,
       tx_bytes,
+      rx_read_idx,
       tx_write_idx,
       tx_drop_count,
       rx_accept_toggle);

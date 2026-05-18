@@ -24,7 +24,7 @@ The primary design lives under `hls_ethernet/`.
 - `tests/hw/` contains hardware-in-the-loop pytest tests.
 - `rtl/status_led.v` is an older handwritten Verilog reference design.
 
-The Ethernet endpoint uses MAC `02:00:00:00:00:01`, sends broadcast diagnostics beacons on custom EtherType `0x88B5`, and replies to valid ARP requests for `192.168.1.100`. Custom probe frames are accepted for diagnostics but do not produce ACK replies.
+The Ethernet endpoint uses MAC `02:00:00:00:00:01`, announces IP `192.168.1.100` with periodic broadcast gratuitous ARP replies, sends broadcast diagnostics beacons on custom EtherType `0x88B5`, and replies to valid ARP requests for `192.168.1.100`. Custom probe frames are accepted for diagnostics but do not produce ACK replies.
 
 Generated outputs are written under `build/`, `hls_ethernet/build/`, `.Xil/`, and Vivado log/journal files. Do not hand-edit generated output; edit source C++/Verilog/Tcl/XDC and rebuild.
 
@@ -133,6 +133,18 @@ Manual Ethernet probing is also available:
 sudo scripts/send_broadcast_eth.py eno1 --listen --message ping
 sudo scripts/send_broadcast_eth.py eno1 --broadcast --listen --message ping
 ```
+
+The board also announces its fixed IP/MAC mapping at a regular interval with a
+broadcast gratuitous ARP reply every 5 seconds:
+
+```sh
+tcpdump -ni eno1 arp
+ip neigh show dev eno1
+```
+
+This lets a normal host learn that `192.168.1.100` is at
+`02:00:00:00:00:01`. `ping 192.168.1.100` still requires ICMP echo reply
+support, which this hardware endpoint does not implement.
 
 ### Formatting And Hooks
 

@@ -5,6 +5,7 @@
 #include "arp.h"
 #include "ethernet_constants.h"
 #include "ethernet_packet_queue.h"
+#include "ethernet_periodic_timers.h"
 #include "ethernet_tx_payloads.h"
 
 enum ProtocolState {
@@ -47,16 +48,15 @@ static void protocol_queue_step(
     bool rx_valid[RX_PACKET_SLOTS],
     bool rx_truncated[RX_PACKET_SLOTS],
     ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<3> &rx_read_idx,
     ap_uint<32> rx_queue_drop_count,
     ap_uint<11> tx_lens[TX_PACKET_SLOTS],
     bool tx_valid[TX_PACKET_SLOTS],
     ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT],
+    ap_uint<3> &rx_read_idx,
     ap_uint<2> &tx_write_idx,
     ap_uint<32> &tx_drop_count,
     ap_uint<1> &rx_accept_toggle) {
 #pragma HLS INLINE
-  static ap_uint<32> beacon_count = BEACON_INTERVAL_CYCLES - 4;
   static ProtocolState protocol_state = PROTO_IDLE;
   static bool preparing_payload = false;
   static ProtocolTxRequest prepare_request = {
@@ -92,13 +92,7 @@ static void protocol_queue_step(
   static ap_uint<32> parse_arp_sender_ip = 0;
   static ap_uint<32> parse_arp_target_ip = 0;
 
-  bool beacon_tick = false;
-  if (beacon_count == BEACON_INTERVAL_CYCLES - 1) {
-    beacon_count = 0;
-    beacon_tick = true;
-  } else {
-    beacon_count++;
-  }
+  PeriodicTxTicks tx_ticks = periodic_tx_timer_step();
 
   if (!preparing_payload && protocol_state == PROTO_IDLE) {
     ap_uint<3> read_idx = rx_read_idx;
@@ -142,7 +136,18 @@ static void protocol_queue_step(
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
       }
-    } else if (beacon_tick) {
+    } else if (tx_ticks.gratuitous_arp_tick) {
+      ProtocolTxRequest request = protocol_tx_gratuitous_arp_request();
+      start_protocol_tx_request(
+          request,
+          tx_valid,
+          tx_write_idx,
+          preparing_payload,
+          prepare_request,
+          prepare_index,
+          prepare_tx_idx,
+          tx_drop_count);
+    } else if (tx_ticks.beacon_tick) {
       ProtocolTxRequest request = protocol_tx_beacon_request();
       request.rx_packet_count = rx_packet_count;
       request.rx_queue_drop_count = rx_queue_drop_count;
@@ -160,7 +165,9 @@ static void protocol_queue_step(
           prepare_index,
           prepare_tx_idx,
           tx_drop_count);
-      uptime_beacon_count++;
+      if (preparing_payload) {
+        uptime_beacon_count++;
+      }
     }
   } else if (!preparing_payload && protocol_state == PROTO_PARSE_ARP) {
     unsigned parse_rx_idx_int = parse_rx_idx;
