@@ -49,6 +49,7 @@ static void protocol_queue_step(
     bool rx_truncated[RX_PACKET_SLOTS],
     ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
     ap_uint<3> &rx_read_idx,
+    ap_uint<32> rx_queue_drop_count,
     ap_uint<11> tx_lens[TX_PACKET_SLOTS],
     bool tx_valid[TX_PACKET_SLOTS],
     ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT],
@@ -69,11 +70,20 @@ static void protocol_queue_step(
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
   };
   static ap_uint<11> prepare_index = 0;
   static ap_uint<2> prepare_tx_idx = 0;
   static ap_uint<32> rx_protocol_drop_count = 0;
   static ap_uint<32> rx_packet_count = 0;
+  static ap_uint<32> arp_reply_count = 0;
+  static ap_uint<32> udp_reply_count = 0;
+  static ap_uint<32> uptime_beacon_count = 0;
   static bool rx_accept = false;
   static ap_uint<3> parse_rx_idx = 0;
   static EthHeader parse_header = {0, 0, 0};
@@ -133,7 +143,13 @@ static void protocol_queue_step(
         request.arp_requester_ip = 0;
         request.udp_requester_ip = 0;
         request.udp_requester_port = 0;
-        request.beacon_rx_count = 0;
+        request.rx_packet_count = 0;
+        request.rx_queue_drop_count = 0;
+        request.rx_protocol_drop_count = 0;
+        request.tx_drop_count = 0;
+        request.arp_reply_count = 0;
+        request.udp_reply_count = 0;
+        request.uptime_beacon_count = 0;
         rx_accept = !rx_accept;
         rx_valid[read_idx_int] = false;
         rx_truncated[read_idx_int] = false;
@@ -181,13 +197,20 @@ static void protocol_queue_step(
         parse_udp_len = 0;
         protocol_state = PROTO_PARSE_IPV4_UDP;
       } else {
+        rx_protocol_drop_count++;
         rx_valid[read_idx_int] = false;
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
       }
     } else if (beacon_tick) {
       ProtocolTxRequest request = protocol_tx_beacon_request();
-      request.beacon_rx_count = rx_packet_count;
+      request.rx_packet_count = rx_packet_count;
+      request.rx_queue_drop_count = rx_queue_drop_count;
+      request.rx_protocol_drop_count = rx_protocol_drop_count;
+      request.tx_drop_count = tx_drop_count;
+      request.arp_reply_count = arp_reply_count;
+      request.udp_reply_count = udp_reply_count;
+      request.uptime_beacon_count = uptime_beacon_count;
       start_protocol_tx_request(
           request,
           tx_valid,
@@ -197,6 +220,7 @@ static void protocol_queue_step(
           prepare_index,
           prepare_tx_idx,
           tx_drop_count);
+      uptime_beacon_count++;
     }
   } else if (!preparing_payload && protocol_state == PROTO_PARSE_ARP) {
     unsigned parse_rx_idx_int = parse_rx_idx;
@@ -292,7 +316,14 @@ static void protocol_queue_step(
         request.arp_requester_ip = parse_arp_sender_ip;
         request.udp_requester_ip = 0;
         request.udp_requester_port = 0;
-        request.beacon_rx_count = 0;
+        request.rx_packet_count = 0;
+        request.rx_queue_drop_count = 0;
+        request.rx_protocol_drop_count = 0;
+        request.tx_drop_count = 0;
+        request.arp_reply_count = 0;
+        request.udp_reply_count = 0;
+        request.uptime_beacon_count = 0;
+        arp_reply_count++;
         start_protocol_tx_request(
             request,
             tx_valid,
@@ -302,6 +333,8 @@ static void protocol_queue_step(
             prepare_index,
             prepare_tx_idx,
             tx_drop_count);
+      } else {
+        rx_protocol_drop_count++;
       }
       rx_valid[parse_rx_idx_int] = false;
       rx_truncated[parse_rx_idx_int] = false;
@@ -405,7 +438,14 @@ static void protocol_queue_step(
         request.arp_requester_ip = 0;
         request.udp_requester_ip = parse_ipv4_src_ip;
         request.udp_requester_port = parse_udp_src_port;
-        request.beacon_rx_count = 0;
+        request.rx_packet_count = 0;
+        request.rx_queue_drop_count = 0;
+        request.rx_protocol_drop_count = 0;
+        request.tx_drop_count = 0;
+        request.arp_reply_count = 0;
+        request.udp_reply_count = 0;
+        request.uptime_beacon_count = 0;
+        udp_reply_count++;
         start_protocol_tx_request(
             request,
             tx_valid,
@@ -415,6 +455,8 @@ static void protocol_queue_step(
             prepare_index,
             prepare_tx_idx,
             tx_drop_count);
+      } else {
+        rx_protocol_drop_count++;
       }
       rx_valid[parse_rx_idx_int] = false;
       rx_truncated[parse_rx_idx_int] = false;

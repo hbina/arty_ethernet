@@ -34,7 +34,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Starting tcpdump. You should see ARTY_BEACON frames once the FPGA link is up."
+echo "Starting tcpdump. You should see ARTY diagnostics beacons once the FPGA link is up."
 sudo tcpdump -l -i "$IFACE" -e -n -vv -XX "ether proto $ETHERTYPE" > >(tee "$LOG") 2>&1 &
 TCPDUMP_PID=$!
 
@@ -70,7 +70,7 @@ unset PCAP_PID
 
 echo
 echo "Expected evidence:"
-echo "- FPGA beacons: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype 0x88b5, payload ARTY_BEACON"
+echo "- FPGA beacons: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype 0x88b5, payload ARTY IP=... RX=..."
 echo "- FPGA ACKs: 02:00:00:00:00:01 > host MAC, ethertype 0x88b5, payload ARTY_ACK"
 echo
 echo "Saved capture files:"
@@ -78,10 +78,10 @@ echo "$LOG"
 echo "$PCAP"
 
 if grep -qi "$FPGA_MAC" "$LOG"; then
-    if grep -q "ARTY_BEACON\\|ARTY_ACK\\|TY_BEACON\\|TY_ACK" "$LOG"; then
+    if grep -q "ARTY IP=\\|ARTY_ACK\\|TY IP=\\|TY_ACK" "$LOG"; then
         echo "PASS: saw FPGA custom Layer-2 payloads."
     else
-        echo "PARTIAL: saw FPGA MAC, but not ARTY_BEACON or ARTY_ACK payload text."
+        echo "PARTIAL: saw FPGA MAC, but not ARTY diagnostics or ARTY_ACK payload text."
     fi
 else
     echo "FAIL: no frames from FPGA MAC $FPGA_MAC were captured."

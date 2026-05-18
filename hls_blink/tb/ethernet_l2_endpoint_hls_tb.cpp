@@ -1,10 +1,12 @@
 #include "../src/ethernet_rx.h"
+#include "../src/ethernet_tx_payloads.h"
 #include "../src/packet_views.h"
 #include "ap_int.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 extern "C" void ethernet_l2_endpoint_hls(
@@ -266,6 +268,10 @@ static void assert_valid_tx_frame(
   }
 
   assert_fcs(frame, eth, body_len);
+}
+
+static std::vector<uint8_t> bytes_from_string(const std::string &text) {
+  return std::vector<uint8_t>(text.begin(), text.end());
 }
 
 static bool tx_frame_has_dst(
@@ -728,6 +734,34 @@ static void test_udp_view() {
   assert(!parse_udp_view(payload, view).valid);
 }
 
+static std::string beacon_payload_string(const ProtocolTxRequest &request) {
+  std::string payload;
+  for (unsigned i = 0; i < protocol_tx_payload_len(PROTO_TX_BEACON); ++i) {
+    payload.push_back((char)protocol_tx_payload_byte(request, i));
+  }
+  return payload;
+}
+
+static void test_beacon_payload_fields() {
+  ProtocolTxRequest request = protocol_tx_beacon_request();
+  assert(
+      beacon_payload_string(request) ==
+      "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000000 RXQ=00000000 "
+      "RXP=00000000 TXD=00000000 ARP=00000000 UDP=00000000 UP=00000000");
+
+  request.rx_packet_count = 3;
+  request.rx_queue_drop_count = 4;
+  request.rx_protocol_drop_count = 1;
+  request.tx_drop_count = 2;
+  request.arp_reply_count = 1;
+  request.udp_reply_count = 1;
+  request.uptime_beacon_count = 1;
+  assert(
+      beacon_payload_string(request) ==
+      "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000003 RXQ=00000004 "
+      "RXP=00000001 TXD=00000002 ARP=00000001 UDP=00000001 UP=00000001");
+}
+
 int main() {
   ap_uint<1> tx_en = 0, rx_accept = 0, tx_frame = 0, rx_active = 0,
              tx_active = 0;
@@ -737,8 +771,9 @@ int main() {
   assert_valid_tx_frame(
       beacon,
       {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-      {'A', 'R', 'T', 'Y', '_', 'B', 'E', 'A', 'C', 'O', 'N', '_',
-       'R', 'X', '=', '0', '0', '0', '0', '0', '0', '0', '0'});
+      bytes_from_string("ARTY IP=192.168.001.100 MAC=020000000001 RX=00000000 "
+                        "RXQ=00000000 RXP=00000000 TXD=00000000 ARP=00000000 "
+                        "UDP=00000000 UP=00000000"));
 
   for (int i = 0; i < 16; ++i) {
     step(0, 0, 0, tx_en, txd, rx_accept, tx_frame, rx_active, tx_active);
@@ -885,6 +920,7 @@ int main() {
   test_rx_oversized_payload_truncated();
   test_ipv4_view();
   test_udp_view();
+  test_beacon_payload_fields();
 
   return 0;
 }

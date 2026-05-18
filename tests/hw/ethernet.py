@@ -11,7 +11,7 @@ FPGA_MAC = bytes.fromhex("020000000001")
 BROADCAST_MAC = bytes.fromhex("ffffffffffff")
 CUSTOM_ETHERTYPE = 0x88B5
 WRONG_ETHERTYPE = 0x88B6
-ARTY_BEACON = b"ARTY_BEACON"
+ARTY_BEACON_PREFIX = b"ARTY IP=192.168.001.100 MAC=020000000001 "
 ARTY_ACK = b"ARTY_ACK"
 
 ETH_P_ALL = 0x0003
@@ -97,6 +97,33 @@ def describe_frame(parsed):
     return (
         f"{mac_text(parsed.src_mac)} -> {mac_text(parsed.dst_mac)} "
         f"ethertype=0x{parsed.ethertype:04x} payload={parsed.payload!r}"
+    )
+
+
+def is_beacon_payload(payload):
+    if not payload.startswith(ARTY_BEACON_PREFIX):
+        return False
+    fields = payload.decode("ascii", errors="ignore").split()
+    expected_keys = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
+    if len(fields) != len(expected_keys) or fields[0] != "ARTY":
+        return False
+
+    values = {}
+    for field in fields[1:]:
+        if "=" not in field:
+            return False
+        key, value = field.split("=", 1)
+        values[key] = value
+
+    if tuple(["ARTY"] + list(values.keys())) != expected_keys:
+        return False
+    if values["IP"] != "192.168.001.100" or values["MAC"] != "020000000001":
+        return False
+
+    hex_keys = ("RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
+    return all(
+        len(values[key]) == 8 and all(byte in b"0123456789ABCDEF" for byte in values[key].encode("ascii"))
+        for key in hex_keys
     )
 
 

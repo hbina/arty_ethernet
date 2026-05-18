@@ -76,6 +76,7 @@ extern "C" void ethernet_l2_endpoint_hls(
       rx_truncated,
       rx_payloads,
       rx_read_idx,
+      rx_drop_count,
       tx_lens,
       tx_valid,
       tx_bytes,

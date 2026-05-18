@@ -2,7 +2,6 @@ import time
 
 from .ethernet import (
     ARTY_ACK,
-    ARTY_BEACON,
     BROADCAST_MAC,
     CUSTOM_ETHERTYPE,
     FPGA_MAC,
@@ -11,6 +10,7 @@ from .ethernet import (
     build_wrong_destination_probe,
     build_wrong_ethertype_probe,
     expect_frame,
+    is_beacon_payload,
     mac_text,
 )
 
@@ -32,9 +32,9 @@ def test_periodic_beacon(raw_eth, timeout):
             frame.src_mac == FPGA_MAC
             and frame.dst_mac == BROADCAST_MAC
             and frame.ethertype == CUSTOM_ETHERTYPE
-            and frame.payload == ARTY_BEACON
+            and is_beacon_payload(frame.payload)
         ),
-        f"ARTY_BEACON from {mac_text(FPGA_MAC)} to broadcast",
+        f"diagnostics beacon from {mac_text(FPGA_MAC)} to broadcast",
     )
 
 
@@ -51,13 +51,22 @@ def test_unicast_ack(raw_eth, timeout):
 
 def test_broadcast_ack(raw_eth, timeout):
     raw_eth.drain(0.1)
-    raw_eth.send(build_broadcast_probe(raw_eth.host_mac))
-    expect_frame(
-        raw_eth,
-        timeout,
-        _is_ack_to_host(raw_eth),
-        f"ARTY_ACK from {mac_text(FPGA_MAC)} to host {mac_text(raw_eth.host_mac)}",
-    )
+    deadline = time.monotonic() + timeout
+    probe = build_broadcast_probe(raw_eth.host_mac)
+    last_error = None
+    while time.monotonic() < deadline:
+        raw_eth.send(probe)
+        try:
+            expect_frame(
+                raw_eth,
+                min(0.5, max(0.0, deadline - time.monotonic())),
+                _is_ack_to_host(raw_eth),
+                f"ARTY_ACK from {mac_text(FPGA_MAC)} to host {mac_text(raw_eth.host_mac)}",
+            )
+            return
+        except AssertionError as exc:
+            last_error = exc
+    raise last_error if last_error is not None else AssertionError("timed out before sending broadcast probe")
 
 
 def test_ignores_wrong_ethertype(raw_eth, timeout):
