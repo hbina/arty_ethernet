@@ -1,4 +1,4 @@
-XILINX_ROOT ?= /home/hbina085/Xilinx/2025.2
+XILINX_ROOT ?= /home/$(USER)/Xilinx/2025.2
 VIVADO ?= $(XILINX_ROOT)/Vivado/bin/vivado
 VITIS_LOADER ?= $(XILINX_ROOT)/Vitis/bin/loader
 VITIS_HLS ?= $(VITIS_LOADER) -exec vitis_hls

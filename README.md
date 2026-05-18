@@ -1,227 +1,186 @@
 # Arty A7-100T Vitis HLS Ethernet Endpoint
 
-This project is a command-line Vitis HLS Ethernet endpoint for a Digilent Arty A7 board. The connected board was verified through Vivado Hardware Manager as:
+This repository contains a command-line FPGA project for a Digilent Arty A7-100T. The design is written primarily in Vitis HLS C++, synthesized to Verilog RTL, implemented with Vivado, and programmed over USB-JTAG.
+
+The verified board is:
 
 ```text
 Cable:  Digilent/210319BE1CD4A
 Device: xc7a100t_0
 Part:   xc7a100t
+Build:  xc7a100ticsg324-1L
 ```
 
-The default FPGA part is therefore:
+The project is a pure hardware design. It does not use MicroBlaze, a soft CPU, firmware, lwIP, DHCP, TCP, or `v++`.
 
-```text
-xc7a100ticsg324-1L
-```
+## Design Overview
 
-## What This Uses
+The primary design lives under `hls_ethernet/`.
 
-The primary flow is Vitis HLS:
+- `hls_ethernet/src/ethernet_status_hls.cpp` drives LED status from frame events.
+- `hls_ethernet/src/ethernet_l2_endpoint_hls.cpp` implements a small custom Layer-2 Ethernet endpoint.
+- `hls_ethernet/src/hls_top.v` connects the generated HLS blocks to the Arty board clocks, Ethernet pins, reset, and LEDs.
+- `constraints/arty_a7.xdc` contains board constraints.
+- `tests/hw/` contains hardware-in-the-loop pytest tests.
+- `rtl/status_led.v` is an older handwritten Verilog reference design.
 
-1. `hls_ethernet/src/ethernet_status_hls.cpp` is C++ using `ap_uint`.
-2. `hls_ethernet/src/ethernet_l2_endpoint_hls.cpp` is a custom Layer-2 Ethernet endpoint in C++.
-3. Vitis HLS synthesizes those C++ blocks into Verilog RTL.
-4. `hls_ethernet/src/hls_top.v` wraps the HLS blocks for the Arty clock, Ethernet pins, and LEDs.
-5. Vivado places/routes the generated RTL and writes a bitstream.
-6. Vivado Hardware Manager or XSCT programs the FPGA over USB-JTAG.
+The Ethernet endpoint uses MAC `02:00:00:00:00:01`, sends broadcast diagnostics beacons on custom EtherType `0x88B5`, and replies to valid ARP requests for `192.168.1.100`. Custom probe frames are accepted for diagnostics but do not produce ACK replies.
 
-This is not a MicroBlaze design. There is no soft CPU and no firmware ELF. The C++ becomes hardware.
+Generated outputs are written under `build/`, `hls_ethernet/build/`, `.Xil/`, and Vivado log/journal files. Do not hand-edit generated output; edit source C++/Verilog/Tcl/XDC and rebuild.
 
-## Files
+## Toolchain
 
-```text
-hls_ethernet/src/ethernet_status_hls.cpp        HLS C++ top function
-hls_ethernet/src/ethernet_l2_endpoint_hls.cpp
-hls_ethernet/src/hls_top.v            Small Verilog wrapper around HLS RTL
-hls_ethernet/tb/ethernet_status_hls_tb.cpp      C simulation testbench
-hls_ethernet/tb/ethernet_l2_endpoint_hls_tb.cpp
-hls_ethernet/scripts/run_hls.tcl      Vitis HLS batch script
-hls_ethernet/scripts/build_hls_bitstream.tcl
-constraints/arty_a7.xdc            Arty A7 100 MHz clock and LED pins
-scripts/send_broadcast_eth.py      Raw custom EtherType send/listen utility
-scripts/probe_vivado_hw.tcl        Discover connected JTAG hardware
-scripts/program_vivado_hw.tcl      Program verified xc7a100t target
-Makefile                           Command wrappers
-```
+Set `XILINX_ROOT` to your Xilinx/Vivado/Vitis 2025.2 installation directory. The Makefile uses it to locate Vivado, Vitis HLS, `hw_server`, XSCT, and related tools.
 
-## Folder Structure
-
-```text
-.
-├── AGENTS.md
-├── Makefile
-├── README.md
-├── constraints/
-├── hls_ethernet/
-│   ├── scripts/
-│   ├── src/
-│   └── tb/
-├── rtl/
-├── scripts/
-└── build/                         Generated, ignored
-```
-
-`hls_ethernet/` is the main design area. The `src/` directory contains synthesizable HLS C++ source and the small Verilog wrapper used to connect the generated HLS modules to the Arty clock, Ethernet pins, and LEDs. The `tb/` directory contains C simulation testbenches with `main()` functions. The `scripts/` directory inside `hls_ethernet/` contains the HLS and Vivado build scripts for this design.
-
-`constraints/` contains board-level XDC constraints. These are shared by both the HLS build and the older RTL-only status LED flow.
-
-`scripts/` contains general hardware scripts that are not specific to the HLS C++ source. The Vivado scripts probe and program the connected board through Hardware Manager. The XSCT scripts are kept as generic command-line examples, but Vivado Hardware Manager gives better board-identification diagnostics.
-
-`rtl/` contains the older handwritten Verilog status LED example. It is useful as a reference, but the primary project flow is the Vitis HLS flow in `hls_ethernet/`.
-
-`build/`, `hls_ethernet/build/`, `.Xil/`, `logs/`, `*.jou`, and `*.log` are generated outputs. They are ignored by git and can be recreated with `make hls-bit` or `make bit`.
-
-## Discover The Connected Board
-
-USB enumeration only shows the FTDI/Digilent adapter; it does not prove whether the FPGA is 35T or 100T:
+For example:
 
 ```sh
-lsusb
+make hls XILINX_ROOT=/opt/Xilinx/2025.2
 ```
 
-To identify the actual FPGA, start `hw_server` in one terminal:
-
-```sh
-cd /path/to/arty_ethernet_endpoint
-make hw-server HW_PORT=3124
-```
-
-Then probe the JTAG chain from another terminal:
-
-```sh
-cd /path/to/arty_ethernet_endpoint
-make probe-board HW_PORT=3124
-```
-
-Expected output for this board includes:
+Important defaults:
 
 ```text
-DEVICE xc7a100t_0
-PART: xc7a100t
+PART=xc7a100ticsg324-1L
+HW_PORT=3124
+IFACE=eno1
+BITFILE=hls_ethernet/build/hls_ethernet.bit
 ```
 
-Use a different `HW_PORT` if `3121` or another port is already in use.
-
-## Build
-
-Build the HLS Verilog, export the HLS IP, and build the FPGA bitstream:
-
-```sh
-cd /path/to/arty_ethernet_endpoint
-make hls-bit
-```
-
-The generated bitstream is:
-
-```text
-hls_ethernet/build/hls_ethernet.bit
-```
-
-## Custom Ethernet Layer-2 Endpoint
-
-The bitstream includes a minimal Ethernet endpoint with no MicroBlaze, lwIP, DHCP, UDP reply service, or TCP. The FPGA MAC address is:
-
-```text
-02:00:00:00:00:01
-```
-
-It periodically transmits a broadcast diagnostics beacon with custom EtherType `0x88B5`, and it replies to valid ARP requests for `192.168.1.100`. Other received frames, including custom probes and IPv4/UDP packets, are consumed for diagnostics counters but do not generate ACK replies. Frames are padded to the Ethernet minimum payload length and include preamble, SFD, and FCS from the FPGA TX path.
-
-On a Linux host connected through `eno1`, listen for beacons and send a test frame:
-
-```sh
-sudo scripts/send_broadcast_eth.py eno1 --listen --message ping
-```
-
-Send a broadcast custom frame instead:
-
-```sh
-sudo scripts/send_broadcast_eth.py eno1 --broadcast --listen --message ping
-```
-
-For an Arty A7-35T instead:
+Override these on the command line when needed, for example:
 
 ```sh
 make hls-bit PART=xc7a35ticsg324-1L
+make test-hw IFACE=enp3s0
+make program-vivado HW_PORT=3125
 ```
 
-For this verified Arty A7-100T:
+## Make Commands
 
-```sh
-make hls-bit PART=xc7a100ticsg324-1L
-```
-
-## Install To The FPGA
-
-Start the hardware server:
-
-```sh
-make hw-server HW_PORT=3124
-```
-
-In another terminal, program the board:
-
-```sh
-make program-vivado HW_PORT=3124
-```
-
-The programming script checks for an `xc7a100t` target before programming.
-
-## Test
-
-After programming, the Arty user LEDs should indicate Ethernet activity and frame events. For command-line verification:
+### Main HLS Flow
 
 ```sh
 make hls
 ```
 
-This runs the HLS C simulation and C synthesis. A successful run reports `CSim done with 0 errors` and writes generated Verilog under:
+Runs Vitis HLS C simulation and C synthesis for the HLS blocks using `hls_ethernet/scripts/run_hls.tcl`. Generated HLS RTL and IP output are placed under `hls_ethernet/build/hls/`.
+
+```sh
+make hls-bit
+```
+
+Runs `make hls`, then runs Vivado implementation through `hls_ethernet/scripts/build_hls_bitstream.tcl`. The main output bitstream is:
 
 ```text
-hls_ethernet/build/hls/ethernet_status_hls_project/solution1/syn/verilog/ethernet_status_hls.v
+hls_ethernet/build/hls_ethernet.bit
 ```
-
-To inspect timing/utilization after a full bitstream build:
 
 ```sh
-less hls_ethernet/build/timing_summary.rpt
-less hls_ethernet/build/utilization.rpt
+make hls-program
 ```
 
-First install pytest. On Debian/Ubuntu:
+Programs `hls_ethernet/build/hls_ethernet.bit` through the older XSCT programming script. Prefer `make program-vivado` for this board because it verifies the target more clearly.
+
+### Board Discovery And Programming
 
 ```sh
-sudo apt install python3-pytest
+make hw-server HW_PORT=3124
 ```
 
-To build the latest HLS bitstream, program the verified `xc7a100t` target through
-Vivado Hardware Manager, and then run the hardware Ethernet tests:
+Starts Xilinx `hw_server`. Run this in its own terminal when probing or programming manually. Use a different `HW_PORT` if the port is already busy.
 
 ```sh
-sudo make install-test-board
+make probe-board HW_PORT=3124
 ```
 
-If the board is already programmed, skip build/programming and only run the
-hardware Ethernet tests:
+Uses Vivado Hardware Manager to inspect the JTAG chain. For the verified board, expect an `xc7a100t` target such as `xc7a100t_0`.
 
 ```sh
-sudo make test-hw
+make program-vivado HW_PORT=3124
 ```
 
-## Clean
+Programs `$(BITFILE)` with `scripts/program_vivado_hw.tcl`. This is the preferred programming path for the Arty A7-100T because the script checks for an `xc7a100t` target before programming.
+
+```sh
+make list-targets HW_PORT=3124
+```
+
+Lists hardware targets through the XSCT helper script.
+
+```sh
+make program HW_PORT=3124
+```
+
+Programs the older RTL-only bitstream `build/status_led.bit` through XSCT.
+
+### Testing
+
+```sh
+make test-hw IFACE=eno1 HW_PORT=3124
+```
+
+Runs the hardware pytest suite in `tests/hw/` against an already-programmed board. Raw Ethernet tests generally require `sudo` or `CAP_NET_RAW`.
+
+```sh
+sudo make install-test-board IFACE=eno1 HW_PORT=3124
+```
+
+Builds the HLS bitstream, programs the board, then runs the hardware pytest suite. Use this for end-to-end board verification after meaningful design changes.
+
+Manual Ethernet probing is also available:
+
+```sh
+sudo scripts/send_broadcast_eth.py eno1 --listen --message ping
+sudo scripts/send_broadcast_eth.py eno1 --broadcast --listen --message ping
+```
+
+### Formatting And Hooks
+
+```sh
+make check-format
+```
+
+Runs `clang-format --dry-run --Werror` over HLS C++ and header files.
+
+```sh
+make format
+```
+
+Applies `clang-format` to HLS C++ and header files.
+
+```sh
+make install-hooks
+```
+
+Installs the repository pre-commit hook by symlinking `scripts/pre-commit.sh` into `.git/hooks/pre-commit`.
+
+### Legacy RTL Flow
+
+```sh
+make bit
+```
+
+Builds the older handwritten RTL status LED example from `rtl/status_led.v` with `scripts/build_bitstream.tcl`. This is kept as a reference path; the main project flow is `make hls-bit`.
+
+### Miscellaneous
+
+```sh
+make vpp-version
+```
+
+Prints the installed `v++` version. The main project does not use `v++`.
 
 ```sh
 make clean
 ```
 
-This removes generated build outputs and Vivado logs.
+Removes generated build output and Vivado logs:
 
-## Notes
-
-`v++` is not used for this Arty Ethernet endpoint project. This project uses `vitis-run --mode hls --tcl` for HLS synthesis and Vivado for implementation/programming.
-
-The older RTL-only status LED example remains in `rtl/status_led.v` and can be built with:
-
-```sh
-make bit
+```text
+.Xil/
+build/
+hls_ethernet/build/
+vivado*.jou
+vivado*.log
+vivado_pid*.str
 ```
