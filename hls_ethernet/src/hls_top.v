@@ -66,7 +66,6 @@ module hls_top (
 
     wire endpoint_eth_tx_en;
     wire [3:0] endpoint_eth_txd;
-    wire       rx_accept_toggle_eth;
     wire       tx_frame_toggle_eth;
     wire       rx_active_eth;
     wire       tx_active_eth;
@@ -82,22 +81,18 @@ module hls_top (
         .eth_rxerr(eth_rxerr),
         .eth_tx_en(endpoint_eth_tx_en),
         .eth_txd(endpoint_eth_txd),
-        .rx_accept_toggle(rx_accept_toggle_eth),
         .tx_frame_toggle(tx_frame_toggle_eth),
         .rx_active(rx_active_eth),
         .tx_active(tx_active_eth)
     );
 
-    reg [2:0] rx_accept_toggle_sync = 3'b000;
     reg [2:0] tx_frame_toggle_sync = 3'b000;
     reg [1:0] activity_sync = 2'b00;
     wire      frame_event_sys;
 
-    assign frame_event_sys = (rx_accept_toggle_sync[2] ^ rx_accept_toggle_sync[1]) |
-                             (tx_frame_toggle_sync[2] ^ tx_frame_toggle_sync[1]);
+    assign frame_event_sys = tx_frame_toggle_sync[2] ^ tx_frame_toggle_sync[1];
 
     always @(posedge CLK100MHZ) begin
-        rx_accept_toggle_sync <= {rx_accept_toggle_sync[1:0], rx_accept_toggle_eth};
         tx_frame_toggle_sync <= {tx_frame_toggle_sync[1:0], tx_frame_toggle_eth};
         activity_sync <= {activity_sync[0], rx_active_eth | tx_active_eth};
     end

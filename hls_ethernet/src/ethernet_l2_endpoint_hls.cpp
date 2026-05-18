@@ -14,7 +14,6 @@ extern "C" void ethernet_l2_endpoint_hls(
     ap_uint<1> eth_rxerr,
     ap_uint<1> &eth_tx_en,
     ap_uint<4> &eth_txd,
-    ap_uint<1> &rx_accept_toggle,
     ap_uint<1> &tx_frame_toggle,
     ap_uint<1> &rx_active,
     ap_uint<1> &tx_active) {
@@ -23,7 +22,6 @@ extern "C" void ethernet_l2_endpoint_hls(
 #pragma HLS INTERFACE ap_none port = eth_rxerr
 #pragma HLS INTERFACE ap_none port = eth_tx_en
 #pragma HLS INTERFACE ap_none port = eth_txd
-#pragma HLS INTERFACE ap_none port = rx_accept_toggle
 #pragma HLS INTERFACE ap_none port = tx_frame_toggle
 #pragma HLS INTERFACE ap_none port = rx_active
 #pragma HLS INTERFACE ap_none port = tx_active
@@ -81,8 +79,7 @@ extern "C" void ethernet_l2_endpoint_hls(
       tx_bytes,
       rx_read_idx,
       tx_write_idx,
-      tx_drop_count,
-      rx_accept_toggle);
+      tx_drop_count);
 
   ethernet_tx_queue_step(
       tx_lens,

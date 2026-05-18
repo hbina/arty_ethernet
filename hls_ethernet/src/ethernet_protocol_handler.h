@@ -54,14 +54,13 @@ static void protocol_queue_step(
     ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT],
     ap_uint<3> &rx_read_idx,
     ap_uint<2> &tx_write_idx,
-    ap_uint<32> &tx_drop_count,
-    ap_uint<1> &rx_accept_toggle) {
+    ap_uint<32> &tx_drop_count) {
 #pragma HLS INLINE
   static ProtocolState protocol_state = PROTO_IDLE;
   static bool preparing_payload = false;
   static ProtocolTxRequest prepare_request = {
       false,
-      {0, FPGA_MAC, CUSTOM_ETHERTYPE},
+      {0, FPGA_MAC, ARP_ETHERTYPE},
       0,
       PROTO_TX_NONE,
       0,
@@ -80,7 +79,6 @@ static void protocol_queue_step(
   static ap_uint<32> rx_packet_count = 0;
   static ap_uint<32> arp_reply_count = 0;
   static ap_uint<32> uptime_beacon_count = 0;
-  static bool rx_accept = false;
   static ap_uint<3> parse_rx_idx = 0;
   static ap_uint<5> parse_index = 0;
   static ap_uint<16> parse_arp_hw_type = 0;
@@ -107,12 +105,6 @@ static void protocol_queue_step(
 
       if (rx_truncated[read_idx_int]) {
         rx_protocol_drop_count++;
-        rx_valid[read_idx_int] = false;
-        rx_truncated[read_idx_int] = false;
-        rx_read_idx = read_idx + 1;
-      } else if (dest_ok && header.ethertype == CUSTOM_ETHERTYPE) {
-        rx_protocol_drop_count++;
-        rx_accept = !rx_accept;
         rx_valid[read_idx_int] = false;
         rx_truncated[read_idx_int] = false;
         rx_read_idx = read_idx + 1;
@@ -309,8 +301,6 @@ static void protocol_queue_step(
       prepare_index++;
     }
   }
-
-  rx_accept_toggle = rx_accept;
 }
 
 #endif

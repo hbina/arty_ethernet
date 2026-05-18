@@ -9,11 +9,10 @@ from dataclasses import dataclass
 
 FPGA_MAC = bytes.fromhex("020000000001")
 BROADCAST_MAC = bytes.fromhex("ffffffffffff")
-CUSTOM_ETHERTYPE = 0x88B5
 ARP_ETHERTYPE = 0x0806
-WRONG_ETHERTYPE = 0x88B6
+IPV4_ETHERTYPE = 0x0800
+DIAGNOSTIC_BEACON_ETHERTYPE = 0x88B5
 ARTY_BEACON_PREFIX = b"ARTY IP=192.168.001.100 MAC=020000000001 "
-ARTY_ACK = b"ARTY_ACK"
 FPGA_IP = "192.168.1.100"
 
 ETH_P_ALL = 0x0003
@@ -51,30 +50,13 @@ def host_mac(iface):
     return info[18:24]
 
 
-def build_frame(dst_mac, src_mac, payload=b"pytest_probe", ethertype=CUSTOM_ETHERTYPE):
+def build_frame(dst_mac, src_mac, payload=b"", ethertype=IPV4_ETHERTYPE):
     if isinstance(payload, str):
         payload = payload.encode("ascii")
     padded = payload
     if len(padded) < MIN_ETH_PAYLOAD:
         padded += b"\x00" * (MIN_ETH_PAYLOAD - len(padded))
     return dst_mac + src_mac + struct.pack("!H", ethertype) + padded
-
-
-def build_unicast_probe(src_mac, payload=b"pytest_unicast"):
-    return build_frame(FPGA_MAC, src_mac, payload, CUSTOM_ETHERTYPE)
-
-
-def build_broadcast_probe(src_mac, payload=b"pytest_broadcast"):
-    return build_frame(BROADCAST_MAC, src_mac, payload, CUSTOM_ETHERTYPE)
-
-
-def build_wrong_ethertype_probe(src_mac, payload=b"pytest_wrong_type"):
-    return build_frame(FPGA_MAC, src_mac, payload, WRONG_ETHERTYPE)
-
-
-def build_wrong_destination_probe(src_mac, payload=b"pytest_wrong_dest"):
-    wrong_dst = bytes.fromhex("0200000000fe")
-    return build_frame(wrong_dst, src_mac, payload, CUSTOM_ETHERTYPE)
 
 
 def build_arp_request(src_mac, src_ip, target_ip=FPGA_IP):
@@ -240,7 +222,7 @@ def expect_frame(raw_eth, timeout, predicate, expected):
         if predicate(parsed):
             return parsed
 
-        if parsed.ethertype in (CUSTOM_ETHERTYPE, ARP_ETHERTYPE) or parsed.src_mac == FPGA_MAC:
+        if parsed.ethertype in (ARP_ETHERTYPE, DIAGNOSTIC_BEACON_ETHERTYPE) or parsed.src_mac == FPGA_MAC:
             mismatches.append((parsed, frame))
             mismatches = mismatches[-8:]
 
@@ -253,5 +235,5 @@ def expect_frame(raw_eth, timeout, predicate, expected):
         for parsed, frame in mismatches:
             details.append(f"  {describe_frame(parsed)} hex={short_hex(frame)}")
     else:
-        details.append("no relevant custom EtherType or FPGA-source frames were received")
+        details.append("no relevant ARP, beacon, or FPGA-source frames were received")
     raise AssertionError("\n".join(details))

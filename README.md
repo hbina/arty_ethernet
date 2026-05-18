@@ -18,13 +18,13 @@ The project is a pure hardware design. It does not use MicroBlaze, a soft CPU, f
 The primary design lives under `hls_ethernet/`.
 
 - `hls_ethernet/src/ethernet_status_hls.cpp` drives LED status from frame events.
-- `hls_ethernet/src/ethernet_l2_endpoint_hls.cpp` implements a small custom Layer-2 Ethernet endpoint.
+- `hls_ethernet/src/ethernet_l2_endpoint_hls.cpp` implements a small Layer-2 Ethernet endpoint.
 - `hls_ethernet/src/hls_top.v` connects the generated HLS blocks to the Arty board clocks, Ethernet pins, reset, and LEDs.
 - `constraints/arty_a7.xdc` contains board constraints.
 - `tests/hw/` contains hardware-in-the-loop pytest tests.
 - `rtl/status_led.v` is an older handwritten Verilog reference design.
 
-The Ethernet endpoint uses MAC `02:00:00:00:00:01`, announces IP `192.168.1.100` with periodic broadcast gratuitous ARP replies, sends broadcast diagnostics beacons on custom EtherType `0x88B5`, and replies to valid ARP requests for `192.168.1.100`. Custom probe frames are accepted for diagnostics but do not produce ACK replies.
+The Ethernet endpoint uses MAC `02:00:00:00:00:01`, announces IP `192.168.1.100` with periodic broadcast gratuitous ARP replies, sends periodic broadcast diagnostics beacons on EtherType `0x88B5`, and replies to valid ARP requests for `192.168.1.100`.
 
 Generated outputs are written under `build/`, `hls_ethernet/build/`, `.Xil/`, and Vivado log/journal files. Do not hand-edit generated output; edit source C++/Verilog/Tcl/XDC and rebuild.
 

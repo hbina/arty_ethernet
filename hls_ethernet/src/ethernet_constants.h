@@ -5,7 +5,7 @@
 
 static const ap_uint<48> FPGA_MAC = 0x020000000001ULL;
 static const ap_uint<48> BROADCAST_MAC = 0xffffffffffffULL;
-static const ap_uint<16> CUSTOM_ETHERTYPE = 0x88B5;
+static const ap_uint<16> DIAGNOSTIC_BEACON_ETHERTYPE = 0x88B5;
 static const ap_uint<16> ARP_ETHERTYPE = 0x0806;
 static const ap_uint<16> IPV4_ETHERTYPE = 0x0800;
 static const ap_uint<32> FPGA_IP = 0xC0A80164;

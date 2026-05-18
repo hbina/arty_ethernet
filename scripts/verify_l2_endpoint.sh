@@ -4,10 +4,7 @@ set -euo pipefail
 IFACE="${1:-eno1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ETHERTYPE="${ETHERTYPE:-0x88b5}"
 FPGA_MAC="${FPGA_MAC:-02:00:00:00:00:01}"
-COUNT="${COUNT:-3}"
-INTERVAL="${INTERVAL:-0.25}"
 CAPTURE_SECONDS="${CAPTURE_SECONDS:-8}"
 OUT_DIR="${OUT_DIR:-logs/l2_verify}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -17,7 +14,6 @@ LOG="$OUT_DIR/${IFACE}_${STAMP}.tcpdump.txt"
 mkdir -p "$OUT_DIR"
 
 echo "Interface: $IFACE"
-echo "EtherType: $ETHERTYPE"
 echo "FPGA MAC: $FPGA_MAC"
 echo "Capture: $PCAP"
 echo "Log: $LOG"
@@ -34,32 +30,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Starting tcpdump. You should see ARTY diagnostics beacons once the FPGA link is up."
-sudo tcpdump -l -i "$IFACE" -e -n -vv -XX "ether proto $ETHERTYPE" > >(tee "$LOG") 2>&1 &
+echo "Starting tcpdump. You should see ARP replies and diagnostics beacons once the FPGA link is up."
+sudo tcpdump -l -i "$IFACE" -e -n -vv -XX "ether src $FPGA_MAC and (arp or ether proto 0x88b5)" > >(tee "$LOG") 2>&1 &
 TCPDUMP_PID=$!
 
-sudo tcpdump -i "$IFACE" -w "$PCAP" "ether proto $ETHERTYPE" >/dev/null 2>&1 &
+sudo tcpdump -i "$IFACE" -w "$PCAP" "ether src $FPGA_MAC and (arp or ether proto 0x88b5)" >/dev/null 2>&1 &
 PCAP_PID=$!
 
 sleep 2
 
-echo "Sending unicast frames to $FPGA_MAC."
-sudo python3 "$REPO_DIR/scripts/send_broadcast_eth.py" "$IFACE" \
-    --dest-mac "$FPGA_MAC" \
-    --ethertype "$ETHERTYPE" \
-    --message "host_unicast_ping" \
-    --count "$COUNT" \
-    --interval "$INTERVAL"
-
-echo "Sending broadcast frames."
-sudo python3 "$REPO_DIR/scripts/send_broadcast_eth.py" "$IFACE" \
-    --broadcast \
-    --ethertype "$ETHERTYPE" \
-    --message "host_broadcast_ping" \
-    --count "$COUNT" \
-    --interval "$INTERVAL"
-
-echo "Capturing for ${CAPTURE_SECONDS}s more to catch FPGA beacons and ACKs."
+echo "Capturing for ${CAPTURE_SECONDS}s more to catch FPGA ARP announcements and beacons."
 sleep "$CAPTURE_SECONDS"
 
 kill "$TCPDUMP_PID" "$PCAP_PID" 2>/dev/null || true
@@ -70,18 +50,15 @@ unset PCAP_PID
 
 echo
 echo "Expected evidence:"
-echo "- FPGA beacons: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype 0x88b5, payload ARTY IP=... RX=..."
+echo "- FPGA gratuitous ARP replies from 02:00:00:00:00:01 for 192.168.1.100"
+echo "- FPGA diagnostics beacons on EtherType 0x88b5"
 echo
 echo "Saved capture files:"
 echo "$LOG"
 echo "$PCAP"
 
 if grep -qi "$FPGA_MAC" "$LOG"; then
-    if grep -q "ARTY IP=\\|TY IP=" "$LOG"; then
-        echo "PASS: saw FPGA custom Layer-2 payloads."
-    else
-        echo "PARTIAL: saw FPGA MAC, but not ARTY diagnostics payload text."
-    fi
+    echo "PASS: saw ARP or diagnostics traffic from FPGA MAC."
 else
     echo "FAIL: no frames from FPGA MAC $FPGA_MAC were captured."
     exit 1

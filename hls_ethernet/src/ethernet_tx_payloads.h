@@ -317,7 +317,7 @@ static ProtocolTxRequest protocol_tx_beacon_request() {
   request.valid = true;
   request.header.dst_mac = BROADCAST_MAC;
   request.header.src_mac = FPGA_MAC;
-  request.header.ethertype = CUSTOM_ETHERTYPE;
+  request.header.ethertype = DIAGNOSTIC_BEACON_ETHERTYPE;
   request.len = protocol_tx_frame_body_len(PROTO_TX_BEACON);
   request.kind = PROTO_TX_BEACON;
   request.arp_requester_mac = 0;

@@ -9,7 +9,7 @@ import time
 
 SIOCGIFHWADDR = 0x8927
 ETH_P_ALL = 0x0003
-DEFAULT_ETHERTYPE = 0x88B5
+DEFAULT_ETHERTYPE = 0x0800
 DEFAULT_FPGA_MAC = "02:00:00:00:00:01"
 MIN_ETH_PAYLOAD = 46
 
@@ -83,9 +83,7 @@ def listen(sock, ethertype, timeout):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Send and listen for Arty custom Layer-2 Ethernet frames."
-    )
+    parser = argparse.ArgumentParser(description="Send and listen for raw Ethernet frames.")
     parser.add_argument("interface", help="Interface connected to the Arty Ethernet port")
     parser.add_argument(
         "--listen",
@@ -135,7 +133,7 @@ def main():
         "--ethertype",
         type=lambda value: int(value, 0),
         default=DEFAULT_ETHERTYPE,
-        help="EtherType value, for example 0x88B5",
+        help="EtherType value, for example 0x0800",
     )
     args = parser.parse_args()
 
