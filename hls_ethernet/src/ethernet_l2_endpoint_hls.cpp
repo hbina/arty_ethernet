@@ -28,64 +28,24 @@ extern "C" void ethernet_l2_endpoint_hls(
 #pragma HLS INTERFACE ap_ctrl_none port = return
 #pragma HLS PIPELINE II = 1
 
-  static EthHeader rx_headers[RX_PACKET_SLOTS];
-  static ap_uint<11> rx_payload_lens[RX_PACKET_SLOTS];
-  static bool rx_valid[RX_PACKET_SLOTS] = {false};
-#pragma HLS ARRAY_PARTITION variable = rx_valid complete
-#pragma HLS DEPENDENCE variable = rx_valid inter false
-  static bool rx_truncated[RX_PACKET_SLOTS] = {false};
-#pragma HLS ARRAY_PARTITION variable = rx_truncated complete
-#pragma HLS DEPENDENCE variable = rx_truncated inter false
-  static ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT];
-#pragma HLS ARRAY_PARTITION variable = rx_payloads complete dim = 1
-#pragma HLS BIND_STORAGE variable = rx_payloads type = ram_t2p impl = bram
-  static ap_uint<3> rx_write_idx = 0;
-  static ap_uint<3> rx_read_idx = 0;
-  static ap_uint<32> rx_drop_count = 0;
+  static RxPacketQueue rx_queue = {};
+#pragma HLS ARRAY_PARTITION variable = rx_queue.valid complete
+#pragma HLS DEPENDENCE variable = rx_queue.valid inter false
+#pragma HLS ARRAY_PARTITION variable = rx_queue.bytes complete dim = 1
+#pragma HLS BIND_STORAGE variable = rx_queue.bytes type = ram_t2p impl = bram
 
-  static ap_uint<11> tx_lens[TX_PACKET_SLOTS];
-  static bool tx_valid[TX_PACKET_SLOTS] = {false};
-#pragma HLS ARRAY_PARTITION variable = tx_valid complete
-#pragma HLS DEPENDENCE variable = tx_valid inter false
-  static ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT];
-#pragma HLS ARRAY_PARTITION variable = tx_bytes complete dim = 1
-#pragma HLS BIND_STORAGE variable = tx_bytes type = ram_t2p impl = bram
-  static ap_uint<2> tx_write_idx = 0;
-  static ap_uint<2> tx_read_idx = 0;
-  static ap_uint<32> tx_drop_count = 0;
+  static TxPacketQueue tx_queue = {};
+#pragma HLS ARRAY_PARTITION variable = tx_queue.valid complete
+#pragma HLS DEPENDENCE variable = tx_queue.valid inter false
+#pragma HLS ARRAY_PARTITION variable = tx_queue.bytes complete dim = 1
+#pragma HLS BIND_STORAGE variable = tx_queue.bytes type = ram_t2p impl = bram
 
-  ethernet_rx_queue_step(
-      eth_rx_dv,
-      eth_rxd,
-      eth_rxerr,
-      rx_headers,
-      rx_payload_lens,
-      rx_valid,
-      rx_truncated,
-      rx_payloads,
-      rx_write_idx,
-      rx_drop_count,
-      rx_active);
+  ethernet_rx_queue_step(eth_rx_dv, eth_rxd, eth_rxerr, rx_queue, rx_active);
 
-  protocol_queue_step(
-      rx_headers,
-      rx_payload_lens,
-      rx_valid,
-      rx_truncated,
-      rx_payloads,
-      rx_drop_count,
-      tx_lens,
-      tx_valid,
-      tx_bytes,
-      rx_read_idx,
-      tx_write_idx,
-      tx_drop_count);
+  protocol_queue_step(rx_queue, tx_queue);
 
   ethernet_tx_queue_step(
-      tx_lens,
-      tx_valid,
-      tx_bytes,
-      tx_read_idx,
+      tx_queue,
       eth_tx_en,
       eth_txd,
       tx_frame_toggle,

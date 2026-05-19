@@ -16,45 +16,30 @@ enum ProtocolState {
 
 static void start_protocol_tx_request(
     const ProtocolTxRequest &request,
-    bool tx_valid[TX_PACKET_SLOTS],
-    ap_uint<2> tx_write_idx,
+    TxPacketQueue &tx_queue,
     bool &preparing_payload,
     ProtocolTxRequest &prepare_request,
     ap_uint<11> &prepare_index,
-    ap_uint<2> &prepare_tx_idx,
-    ap_uint<32> &tx_drop_count) {
+    ap_uint<2> &prepare_tx_idx) {
 #pragma HLS INLINE
-  unsigned write_idx_int = tx_write_idx;
-
   if (!request.valid) {
     return;
   }
 
-  if (tx_valid[write_idx_int]) {
-    tx_drop_count++;
+  if (!packet_queue_write_slot_available(tx_queue)) {
+    packet_queue_drop_write(tx_queue);
   } else {
     preparing_payload = true;
     prepare_request = request;
     prepare_index = 0;
-    prepare_tx_idx = tx_write_idx;
+    prepare_tx_idx = packet_queue_write_slot(tx_queue);
   }
 }
 
 // Protocol/application handling consumes one saved RX packet at a time and
 // builds complete response packets into the TX ring.
-static void protocol_queue_step(
-    EthHeader rx_headers[RX_PACKET_SLOTS],
-    ap_uint<11> rx_payload_lens[RX_PACKET_SLOTS],
-    bool rx_valid[RX_PACKET_SLOTS],
-    bool rx_truncated[RX_PACKET_SLOTS],
-    ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<32> rx_queue_drop_count,
-    ap_uint<11> tx_lens[TX_PACKET_SLOTS],
-    bool tx_valid[TX_PACKET_SLOTS],
-    ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT],
-    ap_uint<3> &rx_read_idx,
-    ap_uint<2> &tx_write_idx,
-    ap_uint<32> &tx_drop_count) {
+static void
+protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
 #pragma HLS INLINE
   static ProtocolState protocol_state = PROTO_IDLE;
   static bool preparing_payload = false;
@@ -93,21 +78,19 @@ static void protocol_queue_step(
   PeriodicTxTicks tx_ticks = periodic_tx_timer_step();
 
   if (!preparing_payload && protocol_state == PROTO_IDLE) {
-    ap_uint<3> read_idx = rx_read_idx;
+    ap_uint<3> read_idx = packet_queue_read_slot(rx_queue);
     unsigned read_idx_int = read_idx;
 
-    if (rx_valid[read_idx_int]) {
-      EthHeader header = rx_headers[read_idx_int];
-      ap_uint<11> payload_len = rx_payload_lens[read_idx_int];
+    if (packet_queue_read_slot_valid(rx_queue)) {
+      EthHeader header = rx_queue.meta[read_idx_int].header;
+      ap_uint<11> payload_len = rx_queue.meta[read_idx_int].payload_len;
       bool dest_ok =
           (header.dst_mac == FPGA_MAC) || (header.dst_mac == BROADCAST_MAC);
       rx_packet_count++;
 
-      if (rx_truncated[read_idx_int]) {
+      if (rx_queue.meta[read_idx_int].truncated) {
         rx_protocol_drop_count++;
-        rx_valid[read_idx_int] = false;
-        rx_truncated[read_idx_int] = false;
-        rx_read_idx = read_idx + 1;
+        packet_queue_consume_read_slot(rx_queue);
       } else if (
           dest_ok && header.ethertype == ARP_ETHERTYPE &&
           payload_len >= ARP_PAYLOAD_BYTES) {
@@ -124,46 +107,40 @@ static void protocol_queue_step(
         protocol_state = PROTO_PARSE_ARP;
       } else {
         rx_protocol_drop_count++;
-        rx_valid[read_idx_int] = false;
-        rx_truncated[read_idx_int] = false;
-        rx_read_idx = read_idx + 1;
+        packet_queue_consume_read_slot(rx_queue);
       }
     } else if (tx_ticks.gratuitous_arp_tick) {
       ProtocolTxRequest request = protocol_tx_gratuitous_arp_request();
       start_protocol_tx_request(
           request,
-          tx_valid,
-          tx_write_idx,
+          tx_queue,
           preparing_payload,
           prepare_request,
           prepare_index,
-          prepare_tx_idx,
-          tx_drop_count);
+          prepare_tx_idx);
     } else if (tx_ticks.beacon_tick) {
       ProtocolTxRequest request = protocol_tx_beacon_request();
       request.rx_packet_count = rx_packet_count;
-      request.rx_queue_drop_count = rx_queue_drop_count;
+      request.rx_queue_drop_count = packet_queue_drop_count(rx_queue);
       request.rx_protocol_drop_count = rx_protocol_drop_count;
-      request.tx_drop_count = tx_drop_count;
+      request.tx_drop_count = packet_queue_drop_count(tx_queue);
       request.arp_reply_count = arp_reply_count;
       request.udp_reply_count = 0;
       request.uptime_beacon_count = uptime_beacon_count;
       start_protocol_tx_request(
           request,
-          tx_valid,
-          tx_write_idx,
+          tx_queue,
           preparing_payload,
           prepare_request,
           prepare_index,
-          prepare_tx_idx,
-          tx_drop_count);
+          prepare_tx_idx);
       if (preparing_payload) {
         uptime_beacon_count++;
       }
     }
   } else if (!preparing_payload && protocol_state == PROTO_PARSE_ARP) {
     unsigned parse_rx_idx_int = parse_rx_idx;
-    ap_uint<8> data_byte = rx_payloads[parse_rx_idx_int][parse_index];
+    ap_uint<8> data_byte = rx_queue.bytes[parse_rx_idx_int][parse_index];
 
     switch ((unsigned)parse_index) {
     case 0:
@@ -263,19 +240,15 @@ static void protocol_queue_step(
         arp_reply_count++;
         start_protocol_tx_request(
             request,
-            tx_valid,
-            tx_write_idx,
+            tx_queue,
             preparing_payload,
             prepare_request,
             prepare_index,
-            prepare_tx_idx,
-            tx_drop_count);
+            prepare_tx_idx);
       } else {
         rx_protocol_drop_count++;
       }
-      rx_valid[parse_rx_idx_int] = false;
-      rx_truncated[parse_rx_idx_int] = false;
-      rx_read_idx = parse_rx_idx + 1;
+      packet_queue_consume_read_slot(rx_queue);
       protocol_state = PROTO_IDLE;
     } else {
       parse_index++;
@@ -286,14 +259,14 @@ static void protocol_queue_step(
     bool prepare_done = false;
     unsigned prepare_tx_idx_int = prepare_tx_idx;
     prepare_tx_slot_frame_body_step(
-        tx_bytes[prepare_tx_idx_int],
+        tx_queue.bytes[prepare_tx_idx_int],
         prepare_request,
         prepare_index,
         prepare_done);
     if (prepare_done) {
-      tx_lens[prepare_tx_idx_int] = prepare_request.len;
-      tx_valid[prepare_tx_idx_int] = true;
-      tx_write_idx = prepare_tx_idx + 1;
+      TxPacketMeta tx_meta;
+      tx_meta.frame_body_len = prepare_request.len;
+      packet_queue_publish_write_slot(tx_queue, tx_meta);
       preparing_payload = false;
       prepare_request.valid = false;
       prepare_request.kind = PROTO_TX_NONE;

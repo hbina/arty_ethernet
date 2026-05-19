@@ -8,10 +8,7 @@
 // TX integration step drains complete packets from the TX ring and feeds the
 // reusable Ethernet framer.
 static void ethernet_tx_queue_step(
-    ap_uint<11> tx_lens[TX_PACKET_SLOTS],
-    bool tx_valid[TX_PACKET_SLOTS],
-    ap_uint<8> tx_bytes[TX_PACKET_SLOTS][TX_FRAME_BODY_BYTES_INT],
-    ap_uint<2> &tx_read_idx,
+    TxPacketQueue &tx_queue,
     ap_uint<1> &eth_tx_en,
     ap_uint<4> &eth_txd,
     ap_uint<1> &tx_frame_toggle,
@@ -20,11 +17,11 @@ static void ethernet_tx_queue_step(
   static bool framer_active = false;
   static ap_uint<2> framer_slot_idx = 0;
 
-  ap_uint<2> read_idx = tx_read_idx;
+  ap_uint<2> read_idx = packet_queue_read_slot(tx_queue);
   unsigned read_idx_int = read_idx;
   unsigned framer_slot_idx_int = framer_slot_idx;
-  bool start_request = !framer_active && tx_valid[read_idx_int];
-  ap_uint<11> start_len = tx_lens[read_idx_int];
+  bool start_request = !framer_active && packet_queue_read_slot_valid(tx_queue);
+  ap_uint<11> start_len = tx_queue.meta[read_idx_int].frame_body_len;
 
   if (start_request) {
     framer_active = true;
@@ -36,7 +33,7 @@ static void ethernet_tx_queue_step(
   ethernet_tx_framer_step(
       start_request,
       start_len,
-      tx_bytes[framer_slot_idx_int],
+      tx_queue.bytes[framer_slot_idx_int],
       eth_tx_en,
       eth_txd,
       tx_frame_toggle,
@@ -44,8 +41,7 @@ static void ethernet_tx_queue_step(
       tx_idle);
 
   if (framer_active && tx_idle) {
-    tx_valid[framer_slot_idx_int] = false;
-    tx_read_idx = framer_slot_idx + 1;
+    packet_queue_consume_read_slot(tx_queue);
     framer_active = false;
   }
 }

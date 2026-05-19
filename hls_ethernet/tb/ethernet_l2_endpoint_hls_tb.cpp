@@ -1,3 +1,4 @@
+#include "../src/ethernet_packet_queue.h"
 #include "../src/ethernet_periodic_timers.h"
 #include "../src/ethernet_rx.h"
 #include "../src/ethernet_tx_payloads.h"
@@ -614,6 +615,87 @@ static void test_periodic_tx_timer_ticks() {
   assert(gratuitous_arp_count == 1);
 }
 
+static RxPacketMeta test_rx_meta(unsigned index) {
+  RxPacketMeta meta;
+  meta.header.dst_mac = FPGA_MAC;
+  meta.header.src_mac = index;
+  meta.header.ethertype = ARP_ETHERTYPE;
+  meta.payload_len = index;
+  meta.truncated = false;
+  return meta;
+}
+
+static TxPacketMeta test_tx_meta(unsigned frame_body_len) {
+  TxPacketMeta meta;
+  meta.frame_body_len = frame_body_len;
+  return meta;
+}
+
+static void test_rx_packet_slot_queue_helpers() {
+  RxPacketQueue queue = {};
+
+  assert(!packet_queue_read_slot_valid(queue));
+  assert(packet_queue_write_slot_available(queue));
+  assert(packet_queue_write_slot(queue) == 0);
+  assert(packet_queue_read_slot(queue) == 0);
+
+  queue.bytes[0][0] = 0xab;
+  packet_queue_publish_write_slot(queue, test_rx_meta(5));
+  assert(packet_queue_read_slot_valid(queue));
+  assert(packet_queue_write_slot(queue) == 1);
+  assert(queue.meta[0].payload_len == 5);
+  assert(queue.bytes[0][0] == 0xab);
+
+  packet_queue_consume_read_slot(queue);
+  assert(!packet_queue_read_slot_valid(queue));
+  assert(packet_queue_read_slot(queue) == 1);
+
+  for (unsigned i = 0; i < RxPacketQueue::Slots; ++i) {
+    assert(packet_queue_write_slot_available(queue));
+    packet_queue_publish_write_slot(queue, test_rx_meta(i));
+  }
+  assert(packet_queue_write_slot(queue) == 1);
+  assert(!packet_queue_write_slot_available(queue));
+
+  packet_queue_publish_write_slot(queue, test_rx_meta(99));
+  assert(packet_queue_drop_count(queue) == 1);
+
+  for (unsigned i = 0; i < RxPacketQueue::Slots; ++i) {
+    assert(packet_queue_read_slot_valid(queue));
+    packet_queue_consume_read_slot(queue);
+  }
+  assert(packet_queue_read_slot(queue) == 1);
+  assert(!packet_queue_read_slot_valid(queue));
+}
+
+static void test_tx_packet_slot_queue_helpers() {
+  TxPacketQueue queue = {};
+
+  assert(!packet_queue_read_slot_valid(queue));
+  assert(packet_queue_write_slot_available(queue));
+
+  for (unsigned i = 0; i < TxPacketQueue::Slots; ++i) {
+    unsigned slot = packet_queue_write_slot(queue);
+    queue.bytes[slot][0] = i;
+    packet_queue_publish_write_slot(queue, test_tx_meta(60 + i));
+  }
+  assert(packet_queue_write_slot(queue) == 0);
+  assert(!packet_queue_write_slot_available(queue));
+
+  packet_queue_publish_write_slot(queue, test_tx_meta(99));
+  assert(packet_queue_drop_count(queue) == 1);
+
+  for (unsigned i = 0; i < TxPacketQueue::Slots; ++i) {
+    unsigned slot = packet_queue_read_slot(queue);
+    assert(packet_queue_read_slot_valid(queue));
+    assert(queue.meta[slot].frame_body_len == 60 + i);
+    assert(queue.bytes[slot][0] == i);
+    packet_queue_consume_read_slot(queue);
+  }
+  assert(packet_queue_read_slot(queue) == 0);
+  assert(!packet_queue_read_slot_valid(queue));
+}
+
 int main() {
   ap_uint<1> tx_en = 0, tx_frame = 0, rx_active = 0, tx_active = 0;
   ap_uint<4> txd = 0;
@@ -705,6 +787,8 @@ int main() {
   test_beacon_payload_fields();
   test_gratuitous_arp_request_builder();
   test_periodic_tx_timer_ticks();
+  test_rx_packet_slot_queue_helpers();
+  test_tx_packet_slot_queue_helpers();
 
   return 0;
 }

@@ -12,13 +12,7 @@ static void ethernet_rx_queue_step(
     ap_uint<1> eth_rx_dv,
     ap_uint<4> eth_rxd,
     ap_uint<1> eth_rxerr,
-    EthHeader rx_headers[RX_PACKET_SLOTS],
-    ap_uint<11> rx_payload_lens[RX_PACKET_SLOTS],
-    bool rx_valid[RX_PACKET_SLOTS],
-    bool rx_truncated[RX_PACKET_SLOTS],
-    ap_uint<8> rx_payloads[RX_PACKET_SLOTS][MAX_ETH_PAYLOAD_BYTES_INT],
-    ap_uint<3> &rx_write_idx,
-    ap_uint<32> &rx_drop_count,
+    RxPacketQueue &rx_queue,
     ap_uint<1> &rx_active) {
 #pragma HLS INLINE
   static ap_uint<8> rx_drop_payload[MAX_ETH_PAYLOAD_BYTES_INT];
@@ -30,7 +24,7 @@ static void ethernet_rx_queue_step(
   ap_uint<8> data_byte;
   bool frame_end;
   EthernetFrameMeta meta;
-  ap_uint<3> write_idx = rx_write_idx;
+  ap_uint<3> write_idx = packet_queue_write_slot(rx_queue);
   unsigned write_idx_int = write_idx;
 
   rx_active = eth_rx_dv;
@@ -43,9 +37,9 @@ static void ethernet_rx_queue_step(
       frame_end);
 
   if (frame_start) {
-    rx_drop_current = rx_valid[write_idx_int];
+    rx_drop_current = !packet_queue_write_slot_available(rx_queue);
     if (rx_drop_current) {
-      rx_drop_count++;
+      packet_queue_drop_write(rx_queue);
     }
   }
 
@@ -65,23 +59,19 @@ static void ethernet_rx_queue_step(
         data_byte,
         frame_end,
         eth_rxerr,
-        rx_payloads[write_idx_int],
+        rx_queue.bytes[write_idx_int],
         meta);
   }
 
   if (frame_end) {
     if (!rx_drop_current && meta.valid) {
-      if (rx_valid[write_idx_int]) {
-        rx_drop_count++;
-      } else {
-        rx_headers[write_idx_int].dst_mac = meta.dst_mac;
-        rx_headers[write_idx_int].src_mac = meta.src_mac;
-        rx_headers[write_idx_int].ethertype = meta.ethertype;
-        rx_payload_lens[write_idx_int] = meta.payload_len;
-        rx_truncated[write_idx_int] = meta.truncated;
-        rx_valid[write_idx_int] = true;
-        rx_write_idx = write_idx + 1;
-      }
+      RxPacketMeta rx_meta;
+      rx_meta.header.dst_mac = meta.dst_mac;
+      rx_meta.header.src_mac = meta.src_mac;
+      rx_meta.header.ethertype = meta.ethertype;
+      rx_meta.payload_len = meta.payload_len;
+      rx_meta.truncated = meta.truncated;
+      packet_queue_publish_write_slot(rx_queue, rx_meta);
     }
     rx_drop_current = false;
   }
