@@ -8,6 +8,7 @@ module hls_top (
     input  wire       eth_rx_dv,
     input  wire [3:0] eth_rxd,
     input  wire       eth_rxerr,
+    input  wire       eth_tx_clk,
     output wire       eth_tx_en,
     output wire [3:0] eth_txd,
     output wire [3:0] led

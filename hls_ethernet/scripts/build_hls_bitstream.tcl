@@ -35,6 +35,8 @@ place_design
 route_design
 
 report_timing_summary -file [file join $flow_dir build timing_summary.rpt]
+report_methodology -file [file join $flow_dir build methodology.rpt]
+report_clock_interaction -file [file join $flow_dir build clock_interaction.rpt]
 report_utilization -file [file join $flow_dir build utilization.rpt]
 write_bitstream -force [file join $flow_dir build hls_ethernet.bit]
 

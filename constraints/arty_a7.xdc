@@ -19,6 +19,7 @@ set_property -dict { PACKAGE_PIN E17 IOSTANDARD LVCMOS33 } [get_ports { eth_rxd[
 set_property -dict { PACKAGE_PIN E18 IOSTANDARD LVCMOS33 } [get_ports { eth_rxd[2] }]
 set_property -dict { PACKAGE_PIN G17 IOSTANDARD LVCMOS33 } [get_ports { eth_rxd[3] }]
 set_property -dict { PACKAGE_PIN C17 IOSTANDARD LVCMOS33 } [get_ports { eth_rxerr }]
+set_property -dict { PACKAGE_PIN H16 IOSTANDARD LVCMOS33 } [get_ports { eth_tx_clk }]
 set_property -dict { PACKAGE_PIN H15 IOSTANDARD LVCMOS33 } [get_ports { eth_tx_en }]
 set_property -dict { PACKAGE_PIN H14 IOSTANDARD LVCMOS33 } [get_ports { eth_txd[0] }]
 set_property -dict { PACKAGE_PIN J14 IOSTANDARD LVCMOS33 } [get_ports { eth_txd[1] }]
@@ -26,4 +27,22 @@ set_property -dict { PACKAGE_PIN J13 IOSTANDARD LVCMOS33 } [get_ports { eth_txd[
 set_property -dict { PACKAGE_PIN H17 IOSTANDARD LVCMOS33 } [get_ports { eth_txd[3] }]
 
 create_clock -add -name eth_rx_clk_pin -period 40.000 -waveform {0.000 20.000} [get_ports { eth_rx_clk }]
-set_clock_groups -asynchronous -group [get_clocks sys_clk_pin] -group [get_clocks eth_rx_clk_pin]
+create_clock -add -name eth_tx_clk_pin -period 40.000 -waveform {0.000 20.000} [get_ports { eth_tx_clk }]
+create_generated_clock -name eth_ref_clk_pin -source [get_pins eth_ref_clk_oddr_i/C] -divide_by 1 [get_ports { eth_ref_clk }]
+
+## DP83848-style 100 Mb/s MII receive interface timing.
+set_input_delay -clock [get_clocks eth_rx_clk_pin] -max 30.000 [get_ports { eth_rx_dv eth_rxerr eth_rxd[*] }]
+set_input_delay -clock [get_clocks eth_rx_clk_pin] -min 10.000 [get_ports { eth_rx_dv eth_rxerr eth_rxd[*] }]
+
+## DP83848-style 100 Mb/s MII transmit interface timing.
+set_output_delay -clock [get_clocks eth_tx_clk_pin] -max 10.000 [get_ports { eth_tx_en eth_txd[*] }]
+set_output_delay -clock [get_clocks eth_tx_clk_pin] -min 0.000 [get_ports { eth_tx_en eth_txd[*] }]
+
+set_clock_groups -asynchronous \
+    -group [get_clocks sys_clk_pin] \
+    -group [get_clocks eth_rx_clk_pin] \
+    -group [get_clocks eth_tx_clk_pin]
+
+## Forwarded clock and board indicators/control outputs do not have external
+## setup/hold contracts.
+set_false_path -to [get_ports { eth_ref_clk led[*] eth_rstn }]
