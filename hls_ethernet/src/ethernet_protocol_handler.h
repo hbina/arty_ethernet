@@ -14,13 +14,18 @@ enum ProtocolState {
   PROTO_PREPARE_TX = 2
 };
 
+static bool ethernet_dst_is_multicast(ap_uint<48> mac) {
+#pragma HLS INLINE
+  return (mac.range(47, 40) & 1) != 0;
+}
+
 static void start_protocol_tx_request(
     const ProtocolTxRequest &request,
     TxPacketQueue &tx_queue,
     bool &preparing_payload,
     ProtocolTxRequest &prepare_request,
     ap_uint<11> &prepare_index,
-    ap_uint<2> &prepare_tx_idx) {
+    ap_uint<TX_PACKET_INDEX_BITS> &prepare_tx_idx) {
 #pragma HLS INLINE
   if (!request.valid) {
     return;
@@ -43,28 +48,17 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
 #pragma HLS INLINE
   static ProtocolState protocol_state = PROTO_IDLE;
   static bool preparing_payload = false;
-  static ProtocolTxRequest prepare_request = {
-      false,
-      {0, FPGA_MAC, ARP_ETHERTYPE},
-      0,
-      PROTO_TX_NONE,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-  };
+  static ProtocolTxRequest prepare_request = {};
   static ap_uint<11> prepare_index = 0;
-  static ap_uint<2> prepare_tx_idx = 0;
+  static ap_uint<TX_PACKET_INDEX_BITS> prepare_tx_idx = 0;
   static ap_uint<32> rx_protocol_drop_count = 0;
   static ap_uint<32> rx_packet_count = 0;
   static ap_uint<32> arp_reply_count = 0;
+  static ap_uint<32> iex_aapl_match_count = 0;
+  static ap_uint<32> iex_symbol_match_counts[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = iex_symbol_match_counts complete
   static ap_uint<32> uptime_beacon_count = 0;
-  static ap_uint<3> parse_rx_idx = 0;
+  static ap_uint<RX_PACKET_INDEX_BITS> parse_rx_idx = 0;
   static ap_uint<5> parse_index = 0;
   static ap_uint<16> parse_arp_hw_type = 0;
   static ap_uint<16> parse_arp_proto_type = 0;
@@ -78,14 +72,17 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
   PeriodicTxTicks tx_ticks = periodic_tx_timer_step();
 
   if (!preparing_payload && protocol_state == PROTO_IDLE) {
-    ap_uint<3> read_idx = packet_queue_read_slot(rx_queue);
+    ap_uint<RX_PACKET_INDEX_BITS> read_idx = packet_queue_read_slot(rx_queue);
     unsigned read_idx_int = read_idx;
 
     if (packet_queue_read_slot_valid(rx_queue)) {
       EthHeader header = rx_queue.meta[read_idx_int].header;
       ap_uint<11> payload_len = rx_queue.meta[read_idx_int].payload_len;
+      bool iex_deep = rx_queue.meta[read_idx_int].iex_deep;
       bool dest_ok =
           (header.dst_mac == FPGA_MAC) || (header.dst_mac == BROADCAST_MAC);
+      bool market_data_dest_ok =
+          dest_ok || ethernet_dst_is_multicast(header.dst_mac);
       rx_packet_count++;
 
       if (rx_queue.meta[read_idx_int].truncated) {
@@ -105,6 +102,20 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
         parse_arp_sender_ip = 0;
         parse_arp_target_ip = 0;
         protocol_state = PROTO_PARSE_ARP;
+      } else if (market_data_dest_ok && header.ethertype == IPV4_ETHERTYPE) {
+        if (iex_deep) {
+          ap_uint<32> frame_match_sum = 0;
+          for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+            ap_uint<8> cnt = rx_queue.meta[read_idx_int].iex_symbol_counts[k];
+            iex_symbol_match_counts[k] += cnt;
+            frame_match_sum += cnt;
+          }
+          iex_aapl_match_count += frame_match_sum;
+        } else {
+          rx_protocol_drop_count++;
+        }
+        packet_queue_consume_read_slot(rx_queue);
       } else {
         rx_protocol_drop_count++;
         packet_queue_consume_read_slot(rx_queue);
@@ -125,8 +136,12 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
       request.rx_protocol_drop_count = rx_protocol_drop_count;
       request.tx_drop_count = packet_queue_drop_count(tx_queue);
       request.arp_reply_count = arp_reply_count;
-      request.udp_reply_count = 0;
+      request.udp_reply_count = iex_aapl_match_count;
       request.uptime_beacon_count = uptime_beacon_count;
+      for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+        request.iex_symbol_match_counts[k] = iex_symbol_match_counts[k];
+      }
       start_protocol_tx_request(
           request,
           tx_queue,
