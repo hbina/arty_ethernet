@@ -24,7 +24,7 @@ static void ethernet_rx_queue_step(
   ap_uint<8> data_byte;
   bool frame_end;
   EthernetFrameMeta meta;
-  ap_uint<3> write_idx = packet_queue_write_slot(rx_queue);
+  ap_uint<RX_PACKET_INDEX_BITS> write_idx = packet_queue_write_slot(rx_queue);
   unsigned write_idx_int = write_idx;
 
   rx_active = eth_rx_dv;
@@ -71,6 +71,11 @@ static void ethernet_rx_queue_step(
       rx_meta.header.ethertype = meta.ethertype;
       rx_meta.payload_len = meta.payload_len;
       rx_meta.truncated = meta.truncated;
+      rx_meta.iex_deep = meta.iex_deep;
+      for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+        rx_meta.iex_symbol_counts[k] = meta.iex_symbol_counts[k];
+      }
       packet_queue_publish_write_slot(rx_queue, rx_meta);
     }
     rx_drop_current = false;
