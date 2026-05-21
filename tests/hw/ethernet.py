@@ -148,7 +148,10 @@ def is_beacon_payload(payload):
     if not payload.startswith(ARTY_BEACON_PREFIX):
         return False
     fields = payload.decode("ascii", errors="ignore").split()
-    expected_keys = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
+    base_keys = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
+    ticker_keys = ("CYCN", "IBIT", "QQQM", "SPY_", "DIA_", "TQQQ", "SQQQ", "BITX", "USO_", "QLD_",
+                   "SPYM", "RENX", "ETHA", "UVIX", "IQMM", "CMCI", "UCIB", "SOXL", "QID_", "BITO")
+    expected_keys = base_keys + ticker_keys
     if len(fields) != len(expected_keys) or fields[0] != "ARTY":
         return False
 
@@ -164,9 +167,9 @@ def is_beacon_payload(payload):
     if values["IP"] != "192.168.001.100" or values["MAC"] != "020000000001":
         return False
 
-    hex_keys = ("RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
+    hex_keys = base_keys[3:] + ticker_keys
     return all(
-        len(values[key]) == 8 and all(byte in b"0123456789ABCDEF" for byte in values[key].encode("ascii"))
+        len(values[key]) == 8 and all(c in "0123456789ABCDEF" for c in values[key].upper())
         for key in hex_keys
     )
 

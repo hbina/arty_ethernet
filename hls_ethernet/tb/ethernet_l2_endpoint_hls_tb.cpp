@@ -2,6 +2,7 @@
 #include "../src/ethernet_periodic_timers.h"
 #include "../src/ethernet_rx.h"
 #include "../src/ethernet_tx_payloads.h"
+#include "../src/iex_deep_filter.h"
 #include "../src/packet_views.h"
 #include "ap_int.h"
 
@@ -150,6 +151,18 @@ static uint32_t read_le32(const std::vector<uint8_t> &frame, unsigned index) {
 
 static uint16_t read_be16(const std::vector<uint8_t> &frame, unsigned index) {
   return ((uint16_t)frame[index] << 8) | frame[index + 1];
+}
+
+static void
+write_be16(std::vector<uint8_t> &frame, unsigned index, uint16_t value) {
+  frame[index] = (uint8_t)(value >> 8);
+  frame[index + 1] = (uint8_t)value;
+}
+
+static void
+write_le16(std::vector<uint8_t> &frame, unsigned index, uint16_t value) {
+  frame[index] = (uint8_t)value;
+  frame[index + 1] = (uint8_t)(value >> 8);
 }
 
 static void append_eth_fcs(std::vector<uint8_t> &frame) {
@@ -543,6 +556,122 @@ static void test_udp_view() {
   assert(!parse_udp_view(payload, view).valid);
 }
 
+static std::vector<uint8_t> iex_deep_ipv4_payload(const char symbol[8]) {
+  const unsigned ip_len = IPV4_HEADER_BYTES;
+  const unsigned udp = ip_len;
+  const unsigned iex = udp + UDP_HEADER_BYTES;
+  const unsigned message_block = iex + IEX_TP_HEADER_BYTES;
+  const unsigned message = message_block + IEX_MESSAGE_BLOCK_HEADER_BYTES;
+  const unsigned message_len = 30;
+  const unsigned udp_payload_len =
+      IEX_TP_HEADER_BYTES + IEX_MESSAGE_BLOCK_HEADER_BYTES + message_len;
+  const unsigned udp_len = UDP_HEADER_BYTES + udp_payload_len;
+  const unsigned total_len = IPV4_HEADER_BYTES + udp_len;
+
+  std::vector<uint8_t> payload(total_len, 0);
+  payload[0] = 0x45;
+  write_be16(payload, 2, total_len);
+  payload[8] = 64;
+  payload[9] = IPV4_PROTOCOL_UDP;
+  payload[12] = 23;
+  payload[13] = 226;
+  payload[14] = 155;
+  payload[15] = 132;
+  payload[16] = 233;
+  payload[17] = 215;
+  payload[18] = 21;
+  payload[19] = 4;
+
+  write_be16(payload, udp + 0, 10378);
+  write_be16(payload, udp + 2, 10378);
+  write_be16(payload, udp + 4, udp_len);
+
+  payload[iex + 0] = 1;
+  write_le16(payload, iex + 2, IEX_DEEP_PROTOCOL_ID);
+  write_le16(payload, iex + 16, udp_payload_len);
+  write_le16(payload, iex + 18, 1);
+
+  write_le16(payload, message_block, message_len);
+  payload[message] = '8';
+  for (unsigned i = 0; i < 8; ++i) {
+    payload[message + IEX_SYMBOL_OFFSET + i] = symbol[i];
+  }
+  return payload;
+}
+
+static void copy_payload_to_ap_uint(
+    const std::vector<uint8_t> &payload,
+    ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT]) {
+  for (unsigned i = 0; i < MAX_ETH_PAYLOAD_BYTES_INT; ++i) {
+    bytes[i] = 0;
+  }
+  for (unsigned i = 0; i < payload.size(); ++i) {
+    bytes[i] = payload[i];
+  }
+}
+
+static void test_iex_deep_top_20_filter() {
+  ap_uint<8> bytes[MAX_ETH_PAYLOAD_BYTES_INT];
+  const char cycn[8] = {'C', 'Y', 'C', 'N', ' ', ' ', ' ', ' '};
+  std::vector<uint8_t> payload = iex_deep_ipv4_payload(cycn);
+  copy_payload_to_ap_uint(payload, bytes);
+
+  PacketView ethernet_payload = {0, (ap_uint<11>)payload.size()};
+  IexDeepView iex = parse_iex_deep_view(bytes, ethernet_payload);
+  assert(iex.valid);
+  assert(iex.message_count == 1);
+
+  ap_uint<16> message_len = read_le16(bytes, iex.message_offset);
+  ap_uint<11> message_offset =
+      iex.message_offset + IEX_MESSAGE_BLOCK_HEADER_BYTES;
+  assert(message_len == 30);
+  assert(
+      iex_deep_message_matches_any_top_20(bytes, message_offset, message_len));
+
+  const char msft[8] = {'M', 'S', 'F', 'T', ' ', ' ', ' ', ' '};
+  payload = iex_deep_ipv4_payload(msft);
+  copy_payload_to_ap_uint(payload, bytes);
+  iex = parse_iex_deep_view(bytes, ethernet_payload);
+  message_len = read_le16(bytes, iex.message_offset);
+  message_offset = iex.message_offset + IEX_MESSAGE_BLOCK_HEADER_BYTES;
+  assert(
+      !iex_deep_message_matches_any_top_20(bytes, message_offset, message_len));
+}
+
+static void test_rx_parser_counts_iex_top_20_messages() {
+  const char cycn[8] = {'C', 'Y', 'C', 'N', ' ', ' ', ' ', ' '};
+  std::vector<uint8_t> payload = iex_deep_ipv4_payload(cycn);
+  std::vector<uint8_t> frame = {0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5,
+                                0x01, 0x00, 0x5e, 0x57, 0x15, 0x04, 0xa0, 0x88,
+                                0xc2, 0xac, 0xb7, 0x65, 0x08, 0x00};
+  frame.insert(frame.end(), payload.begin(), payload.end());
+  append_eth_fcs(frame);
+
+  ap_uint<8> parsed_payload[MAX_ETH_PAYLOAD_BYTES_INT];
+  EthernetFrameMeta meta = parse_rx_frame_direct(frame, parsed_payload);
+  assert(meta.valid);
+  assert(meta.iex_deep);
+  assert(meta.iex_symbol_counts[0] == 1);
+  for (int k = 1; k < 20; ++k) {
+    assert(meta.iex_symbol_counts[k] == 0);
+  }
+
+  // Also test rejecting MSFT
+  const char msft[8] = {'M', 'S', 'F', 'T', ' ', ' ', ' ', ' '};
+  payload = iex_deep_ipv4_payload(msft);
+  frame = {0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5, 0x01, 0x00, 0x5e,
+           0x57, 0x15, 0x04, 0xa0, 0x88, 0xc2, 0xac, 0xb7, 0x65, 0x08, 0x00};
+  frame.insert(frame.end(), payload.begin(), payload.end());
+  append_eth_fcs(frame);
+
+  meta = parse_rx_frame_direct(frame, parsed_payload);
+  assert(meta.valid);
+  assert(meta.iex_deep);
+  for (int k = 0; k < 20; ++k) {
+    assert(meta.iex_symbol_counts[k] == 0);
+  }
+}
+
 static std::string beacon_payload_string(const ProtocolTxRequest &request) {
   std::string payload;
   for (unsigned i = 0; i < protocol_tx_payload_len(PROTO_TX_BEACON); ++i) {
@@ -557,7 +686,11 @@ static void test_beacon_payload_fields() {
   assert(
       beacon_payload_string(request) ==
       "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000000 RXQ=00000000 "
-      "RXP=00000000 TXD=00000000 ARP=00000000 UDP=00000000 UP=00000000");
+      "RXP=00000000 TXD=00000000 ARP=00000000 UDP=00000000 UP=00000000"
+      " CYCN=00000000 IBIT=00000000 QQQM=00000000 SPY_=00000000 DIA_=00000000"
+      " TQQQ=00000000 SQQQ=00000000 BITX=00000000 USO_=00000000 QLD_=00000000"
+      " SPYM=00000000 RENX=00000000 ETHA=00000000 UVIX=00000000 IQMM=00000000"
+      " CMCI=00000000 UCIB=00000000 SOXL=00000000 QID_=00000000 BITO=00000000");
 
   request.rx_packet_count = 3;
   request.rx_queue_drop_count = 4;
@@ -566,10 +699,17 @@ static void test_beacon_payload_fields() {
   request.arp_reply_count = 1;
   request.udp_reply_count = 1;
   request.uptime_beacon_count = 1;
+  for (int k = 0; k < 20; ++k) {
+    request.iex_symbol_match_counts[k] = k + 1;
+  }
   assert(
       beacon_payload_string(request) ==
       "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000003 RXQ=00000004 "
-      "RXP=00000001 TXD=00000002 ARP=00000001 UDP=00000001 UP=00000001");
+      "RXP=00000001 TXD=00000002 ARP=00000001 UDP=00000001 UP=00000001"
+      " CYCN=00000001 IBIT=00000002 QQQM=00000003 SPY_=00000004 DIA_=00000005"
+      " TQQQ=00000006 SQQQ=00000007 BITX=00000008 USO_=00000009 QLD_=0000000A"
+      " SPYM=0000000B RENX=0000000C ETHA=0000000D UVIX=0000000E IQMM=0000000F"
+      " CMCI=00000010 UCIB=00000011 SOXL=00000012 QID_=00000013 BITO=00000014");
 }
 
 static void test_gratuitous_arp_request_builder() {
@@ -622,6 +762,10 @@ static RxPacketMeta test_rx_meta(unsigned index) {
   meta.header.ethertype = ARP_ETHERTYPE;
   meta.payload_len = index;
   meta.truncated = false;
+  meta.iex_deep = false;
+  for (int k = 0; k < 20; ++k) {
+    meta.iex_symbol_counts[k] = 0;
+  }
   return meta;
 }
 
@@ -784,6 +928,8 @@ int main() {
   test_rx_oversized_payload_truncated();
   test_ipv4_view();
   test_udp_view();
+  test_iex_deep_top_20_filter();
+  test_rx_parser_counts_iex_top_20_messages();
   test_beacon_payload_fields();
   test_gratuitous_arp_request_builder();
   test_periodic_tx_timer_ticks();
