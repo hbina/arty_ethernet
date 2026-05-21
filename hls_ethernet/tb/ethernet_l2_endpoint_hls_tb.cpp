@@ -2,9 +2,9 @@
 #include "../src/ethernet_periodic_timers.h"
 #include "../src/ethernet_rx.h"
 #include "../src/ethernet_tx_payloads.h"
-#include "../src/iex_deep_filter.h"
 #include "../src/packet_views.h"
 #include "ap_int.h"
+#include "iex_deep_filter.h"
 
 #include <cassert>
 #include <cstdint>

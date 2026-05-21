@@ -1,10 +1,10 @@
 #ifndef IEX_DEEP_FILTER_H
 #define IEX_DEEP_FILTER_H
 
+#include "../src/ethernet_constants.h"
+#include "../src/packet_views.h"
+#include "../src/protocol_helpers.h"
 #include "ap_int.h"
-#include "ethernet_constants.h"
-#include "packet_views.h"
-#include "protocol_helpers.h"
 
 struct IexDeepView {
   bool valid;
