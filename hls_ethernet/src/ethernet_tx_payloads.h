@@ -28,6 +28,7 @@ struct ProtocolTxRequest {
   ap_uint<32> arp_reply_count;
   ap_uint<32> udp_reply_count;
   ap_uint<32> uptime_beacon_count;
+  ap_uint<32> iex_symbol_match_counts[20];
 };
 
 static ap_uint<8> hex_digit_byte(ap_uint<4> value) {
@@ -141,7 +142,7 @@ static ap_uint<8> ipv4_fixed_byte(ap_uint<32> ip, ap_uint<4> index) {
 
 // Return one byte from the diagnostics beacon payload.
 static ap_uint<8> beacon_payload_literal_byte(
-    ap_uint<8> index,
+    ap_uint<11> index,
     const ProtocolTxRequest &request) {
 #pragma HLS INLINE
   if (index >= 8 && index < 23) {
@@ -259,7 +260,7 @@ static ap_uint<8> beacon_payload_literal_byte(
 static ap_uint<11> protocol_tx_payload_len(ProtocolTxKind request_kind) {
 #pragma HLS INLINE
   if (request_kind == PROTO_TX_BEACON) {
-    return 129;
+    return 409;
   }
   if (request_kind == PROTO_TX_ARP_REPLY ||
       request_kind == PROTO_TX_GRATUITOUS_ARP) {
@@ -273,13 +274,48 @@ static ap_uint<11> protocol_tx_frame_body_len(ProtocolTxKind request_kind) {
   return ETH_HEADER_BYTES + protocol_tx_payload_len(request_kind);
 }
 
+static ap_uint<8> beacon_ticker_payload_byte(
+    ap_uint<11> offset,
+    const ProtocolTxRequest &request) {
+#pragma HLS INLINE
+  ap_uint<5> k = offset / 14;
+  ap_uint<4> sub_offset = offset % 14;
+
+  if (sub_offset == 0) {
+    return ' ';
+  } else if (sub_offset == 1) {
+    ap_uint<8> c = TOP_20_SYMBOLS[k][0];
+    return (c == ' ') ? (ap_uint<8>)'_' : c;
+  } else if (sub_offset == 2) {
+    ap_uint<8> c = TOP_20_SYMBOLS[k][1];
+    return (c == ' ') ? (ap_uint<8>)'_' : c;
+  } else if (sub_offset == 3) {
+    ap_uint<8> c = TOP_20_SYMBOLS[k][2];
+    return (c == ' ') ? (ap_uint<8>)'_' : c;
+  } else if (sub_offset == 4) {
+    ap_uint<8> c = TOP_20_SYMBOLS[k][3];
+    return (c == ' ') ? (ap_uint<8>)'_' : c;
+  } else if (sub_offset == 5) {
+    return '=';
+  } else {
+    return hex32_byte(request.iex_symbol_match_counts[k], sub_offset - 6);
+  }
+}
+
 static ap_uint<8>
 protocol_tx_payload_byte(const ProtocolTxRequest &request, ap_uint<11> index) {
 #pragma HLS INLINE
   ProtocolTxKind request_kind = request.kind;
-  ap_uint<8> payload_byte = beacon_payload_literal_byte(index, request);
+  ap_uint<8> payload_byte = 0;
 
-  if (request_kind == PROTO_TX_ARP_REPLY ||
+  if (request_kind == PROTO_TX_BEACON) {
+    if (index < 129) {
+      payload_byte = beacon_payload_literal_byte(index, request);
+    } else {
+      payload_byte = beacon_ticker_payload_byte(index - 129, request);
+    }
+  } else if (
+      request_kind == PROTO_TX_ARP_REPLY ||
       request_kind == PROTO_TX_GRATUITOUS_ARP) {
     payload_byte = arp_reply_payload_byte(
         index,
@@ -329,6 +365,10 @@ static ProtocolTxRequest protocol_tx_beacon_request() {
   request.arp_reply_count = 0;
   request.udp_reply_count = 0;
   request.uptime_beacon_count = 0;
+  for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+    request.iex_symbol_match_counts[k] = 0;
+  }
   return request;
 }
 
@@ -350,6 +390,10 @@ static ProtocolTxRequest protocol_tx_gratuitous_arp_request() {
   request.arp_reply_count = 0;
   request.udp_reply_count = 0;
   request.uptime_beacon_count = 0;
+  for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+    request.iex_symbol_match_counts[k] = 0;
+  }
   return request;
 }
 

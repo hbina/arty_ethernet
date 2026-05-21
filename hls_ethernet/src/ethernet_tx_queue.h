@@ -15,9 +15,9 @@ static void ethernet_tx_queue_step(
     ap_uint<1> &tx_active) {
 #pragma HLS INLINE
   static bool framer_active = false;
-  static ap_uint<2> framer_slot_idx = 0;
+  static ap_uint<TX_PACKET_INDEX_BITS> framer_slot_idx = 0;
 
-  ap_uint<2> read_idx = packet_queue_read_slot(tx_queue);
+  ap_uint<TX_PACKET_INDEX_BITS> read_idx = packet_queue_read_slot(tx_queue);
   unsigned read_idx_int = read_idx;
   unsigned framer_slot_idx_int = framer_slot_idx;
   bool start_request = !framer_active && packet_queue_read_slot_valid(tx_queue);

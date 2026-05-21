@@ -40,7 +40,15 @@ extern "C" void ethernet_l2_endpoint_hls(
 #pragma HLS ARRAY_PARTITION variable = tx_queue.bytes complete dim = 1
 #pragma HLS BIND_STORAGE variable = tx_queue.bytes type = ram_t2p impl = bram
 
-  ethernet_rx_queue_step(eth_rx_dv, eth_rxd, eth_rxerr, rx_queue, rx_active);
+  static ap_uint<1> rx_dv_reg = 0;
+  static ap_uint<4> rx_d_reg = 0;
+  static ap_uint<1> rx_err_reg = 0;
+
+  rx_dv_reg = eth_rx_dv;
+  rx_d_reg = eth_rxd;
+  rx_err_reg = eth_rxerr;
+
+  ethernet_rx_queue_step(rx_dv_reg, rx_d_reg, rx_err_reg, rx_queue, rx_active);
 
   protocol_queue_step(rx_queue, tx_queue);
 
