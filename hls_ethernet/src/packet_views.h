@@ -13,10 +13,12 @@ struct PacketView {
 struct EthernetFrameMeta {
   bool valid;
   bool truncated;
+  bool iex_deep;
   ap_uint<48> dst_mac;
   ap_uint<48> src_mac;
   ap_uint<16> ethertype;
   ap_uint<11> payload_len;
+  ap_uint<8> iex_symbol_counts[20];
 };
 
 struct Ipv4View {

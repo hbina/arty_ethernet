@@ -14,6 +14,12 @@ static const ap_uint<8> IPV4_PROTOCOL_UDP = 17;
 static const ap_uint<8> IPV4_DEFAULT_TTL = 64;
 static const ap_uint<16> UDP_FPGA_PORT = 40000;
 static const ap_uint<8> UDP_HEADER_BYTES = 8;
+static const ap_uint<16> IEX_DEEP_PROTOCOL_ID = 0x8004;
+static const ap_uint<11> IEX_TP_HEADER_BYTES = 40;
+static const ap_uint<11> IEX_TP_MESSAGE_COUNT_OFFSET = 18;
+static const ap_uint<11> IEX_MESSAGE_BLOCK_HEADER_BYTES = 2;
+static const ap_uint<11> IEX_SYMBOL_OFFSET = 10;
+static const ap_uint<11> IEX_SYMBOL_BYTES = 8;
 static const ap_uint<32> BEACON_INTERVAL_CYCLES = 25000000;
 static const ap_uint<32> GRATUITOUS_ARP_INTERVAL_CYCLES = 125000000;
 static const int MAX_ETH_PAYLOAD_BYTES_INT = 1500;
@@ -32,5 +38,27 @@ struct EthHeader {
   ap_uint<48> src_mac;
   ap_uint<16> ethertype;
 };
+
+static const ap_uint<8> TOP_20_SYMBOLS[20][8] = {
+    {'C', 'Y', 'C', 'N', ' ', ' ', ' ', ' '},
+    {'I', 'B', 'I', 'T', ' ', ' ', ' ', ' '},
+    {'Q', 'Q', 'Q', 'M', ' ', ' ', ' ', ' '},
+    {'S', 'P', 'Y', ' ', ' ', ' ', ' ', ' '},
+    {'D', 'I', 'A', ' ', ' ', ' ', ' ', ' '},
+    {'T', 'Q', 'Q', 'Q', ' ', ' ', ' ', ' '},
+    {'S', 'Q', 'Q', 'Q', ' ', ' ', ' ', ' '},
+    {'B', 'I', 'T', 'X', ' ', ' ', ' ', ' '},
+    {'U', 'S', 'O', ' ', ' ', ' ', ' ', ' '},
+    {'Q', 'L', 'D', ' ', ' ', ' ', ' ', ' '},
+    {'S', 'P', 'Y', 'M', ' ', ' ', ' ', ' '},
+    {'R', 'E', 'N', 'X', ' ', ' ', ' ', ' '},
+    {'E', 'T', 'H', 'A', ' ', ' ', ' ', ' '},
+    {'U', 'V', 'I', 'X', ' ', ' ', ' ', ' '},
+    {'I', 'Q', 'M', 'M', ' ', ' ', ' ', ' '},
+    {'C', 'M', 'C', 'I', ' ', ' ', ' ', ' '},
+    {'U', 'C', 'I', 'B', ' ', ' ', ' ', ' '},
+    {'S', 'O', 'X', 'L', ' ', ' ', ' ', ' '},
+    {'Q', 'I', 'D', ' ', ' ', ' ', ' ', ' '},
+    {'B', 'I', 'T', 'O', ' ', ' ', ' ', ' '}};
 
 #endif

@@ -9,8 +9,8 @@ static constexpr int packet_queue_slots_for_index_bits() {
   return 1 << IndexBits;
 }
 
-static const int RX_PACKET_INDEX_BITS = 3;
-static const int TX_PACKET_INDEX_BITS = 2;
+static const int RX_PACKET_INDEX_BITS = 7;
+static const int TX_PACKET_INDEX_BITS = 5;
 
 template <int MaxBytes, typename Meta, int IndexBits> struct PacketSlotQueue {
   static const int Slots = packet_queue_slots_for_index_bits<IndexBits>();
@@ -27,6 +27,8 @@ struct RxPacketMeta {
   EthHeader header;
   ap_uint<11> payload_len;
   bool truncated;
+  bool iex_deep;
+  ap_uint<8> iex_symbol_counts[20];
 };
 
 struct TxPacketMeta {
