@@ -588,8 +588,8 @@ static std::vector<uint8_t> iex_deep_ipv4_payload(const char symbol[8]) {
 
   payload[iex + 0] = 1;
   write_le16(payload, iex + 2, IEX_DEEP_PROTOCOL_ID);
-  write_le16(payload, iex + 16, udp_payload_len);
-  write_le16(payload, iex + 18, 1);
+  write_le16(payload, iex + 12, udp_payload_len);
+  write_le16(payload, iex + 14, 1);
 
   write_le16(payload, message_block, message_len);
   payload[message] = '8';
@@ -683,14 +683,23 @@ static std::string beacon_payload_string(const ProtocolTxRequest &request) {
 static void test_beacon_payload_fields() {
   ProtocolTxRequest request = protocol_tx_beacon_request();
   assert(request.header.ethertype == DIAGNOSTIC_BEACON_ETHERTYPE);
-  assert(
-      beacon_payload_string(request) ==
+
+  std::string expected_empty =
       "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000000 RXQ=00000000 "
-      "RXP=00000000 TXD=00000000 ARP=00000000 UDP=00000000 UP=00000000"
-      " CYCN=00000000 IBIT=00000000 QQQM=00000000 SPY_=00000000 DIA_=00000000"
-      " TQQQ=00000000 SQQQ=00000000 BITX=00000000 USO_=00000000 QLD_=00000000"
-      " SPYM=00000000 RENX=00000000 ETHA=00000000 UVIX=00000000 IQMM=00000000"
-      " CMCI=00000000 UCIB=00000000 SOXL=00000000 QID_=00000000 BITO=00000000");
+      "RXP=00000000 TXD=00000000 ARP=00000000 UDP=00000000 UP=00000000";
+  for (int k = 0; k < 20; ++k) {
+    char buf[128];
+    char sym[5] = {0};
+    for (int i = 0; i < 4; i++)
+      sym[i] = TOP_20_SYMBOLS[k][i] == ' ' ? '_' : (char)TOP_20_SYMBOLS[k][i];
+    snprintf(
+        buf,
+        sizeof(buf),
+        " %s=00000000:00000000:00000000:00000000:00000000:00000000",
+        sym);
+    expected_empty += buf;
+  }
+  assert(beacon_payload_string(request) == expected_empty);
 
   request.rx_packet_count = 3;
   request.rx_queue_drop_count = 4;
@@ -699,17 +708,35 @@ static void test_beacon_payload_fields() {
   request.arp_reply_count = 1;
   request.udp_reply_count = 1;
   request.uptime_beacon_count = 1;
+
+  std::string expected_full =
+      "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000003 RXQ=00000004 "
+      "RXP=00000001 TXD=00000002 ARP=00000001 UDP=00000001 UP=00000001";
   for (int k = 0; k < 20; ++k) {
     request.iex_symbol_match_counts[k] = k + 1;
+    request.iex_symbol_vwap[k] = k + 2;
+    request.iex_symbol_best_bid_price[k] = k + 3;
+    request.iex_symbol_best_bid_size[k] = k + 4;
+    request.iex_symbol_best_offer_price[k] = k + 5;
+    request.iex_symbol_best_offer_size[k] = k + 6;
+    char buf[128];
+    char sym[5] = {0};
+    for (int i = 0; i < 4; i++)
+      sym[i] = TOP_20_SYMBOLS[k][i] == ' ' ? '_' : (char)TOP_20_SYMBOLS[k][i];
+    snprintf(
+        buf,
+        sizeof(buf),
+        " %s=%08X:%08X:%08X:%08X:%08X:%08X",
+        sym,
+        k + 1,
+        k + 2,
+        k + 3,
+        k + 4,
+        k + 5,
+        k + 6);
+    expected_full += buf;
   }
-  assert(
-      beacon_payload_string(request) ==
-      "ARTY IP=192.168.001.100 MAC=020000000001 RX=00000003 RXQ=00000004 "
-      "RXP=00000001 TXD=00000002 ARP=00000001 UDP=00000001 UP=00000001"
-      " CYCN=00000001 IBIT=00000002 QQQM=00000003 SPY_=00000004 DIA_=00000005"
-      " TQQQ=00000006 SQQQ=00000007 BITX=00000008 USO_=00000009 QLD_=0000000A"
-      " SPYM=0000000B RENX=0000000C ETHA=0000000D UVIX=0000000E IQMM=0000000F"
-      " CMCI=00000010 UCIB=00000011 SOXL=00000012 QID_=00000013 BITO=00000014");
+  assert(beacon_payload_string(request) == expected_full);
 }
 
 static void test_gratuitous_arp_request_builder() {

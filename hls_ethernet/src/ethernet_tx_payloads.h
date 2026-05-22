@@ -29,6 +29,11 @@ struct ProtocolTxRequest {
   ap_uint<32> udp_reply_count;
   ap_uint<32> uptime_beacon_count;
   ap_uint<32> iex_symbol_match_counts[20];
+  ap_uint<32> iex_symbol_vwap[20];
+  ap_uint<32> iex_symbol_best_bid_price[20];
+  ap_uint<32> iex_symbol_best_bid_size[20];
+  ap_uint<32> iex_symbol_best_offer_price[20];
+  ap_uint<32> iex_symbol_best_offer_size[20];
 };
 
 static ap_uint<8> hex_digit_byte(ap_uint<4> value) {
@@ -260,7 +265,7 @@ static ap_uint<8> beacon_payload_literal_byte(
 static ap_uint<11> protocol_tx_payload_len(ProtocolTxKind request_kind) {
 #pragma HLS INLINE
   if (request_kind == PROTO_TX_BEACON) {
-    return 409;
+    return 1309;
   }
   if (request_kind == PROTO_TX_ARP_REPLY ||
       request_kind == PROTO_TX_GRATUITOUS_ARP) {
@@ -278,8 +283,8 @@ static ap_uint<8> beacon_ticker_payload_byte(
     ap_uint<11> offset,
     const ProtocolTxRequest &request) {
 #pragma HLS INLINE
-  ap_uint<5> k = offset / 14;
-  ap_uint<4> sub_offset = offset % 14;
+  ap_uint<5> k = offset / 59;
+  ap_uint<6> sub_offset = offset % 59;
 
   if (sub_offset == 0) {
     return ' ';
@@ -297,8 +302,28 @@ static ap_uint<8> beacon_ticker_payload_byte(
     return (c == ' ') ? (ap_uint<8>)'_' : c;
   } else if (sub_offset == 5) {
     return '=';
-  } else {
+  } else if (sub_offset >= 6 && sub_offset < 14) {
     return hex32_byte(request.iex_symbol_match_counts[k], sub_offset - 6);
+  } else if (sub_offset == 14) {
+    return ':';
+  } else if (sub_offset >= 15 && sub_offset < 23) {
+    return hex32_byte(request.iex_symbol_vwap[k], sub_offset - 15);
+  } else if (sub_offset == 23) {
+    return ':';
+  } else if (sub_offset >= 24 && sub_offset < 32) {
+    return hex32_byte(request.iex_symbol_best_bid_price[k], sub_offset - 24);
+  } else if (sub_offset == 32) {
+    return ':';
+  } else if (sub_offset >= 33 && sub_offset < 41) {
+    return hex32_byte(request.iex_symbol_best_bid_size[k], sub_offset - 33);
+  } else if (sub_offset == 41) {
+    return ':';
+  } else if (sub_offset >= 42 && sub_offset < 50) {
+    return hex32_byte(request.iex_symbol_best_offer_price[k], sub_offset - 42);
+  } else if (sub_offset == 50) {
+    return ':';
+  } else {
+    return hex32_byte(request.iex_symbol_best_offer_size[k], sub_offset - 51);
   }
 }
 
@@ -368,6 +393,11 @@ static ProtocolTxRequest protocol_tx_beacon_request() {
   for (int k = 0; k < 20; ++k) {
 #pragma HLS UNROLL
     request.iex_symbol_match_counts[k] = 0;
+    request.iex_symbol_vwap[k] = 0;
+    request.iex_symbol_best_bid_price[k] = 0;
+    request.iex_symbol_best_bid_size[k] = 0;
+    request.iex_symbol_best_offer_price[k] = 0;
+    request.iex_symbol_best_offer_size[k] = 0;
   }
   return request;
 }
@@ -393,6 +423,11 @@ static ProtocolTxRequest protocol_tx_gratuitous_arp_request() {
   for (int k = 0; k < 20; ++k) {
 #pragma HLS UNROLL
     request.iex_symbol_match_counts[k] = 0;
+    request.iex_symbol_vwap[k] = 0;
+    request.iex_symbol_best_bid_price[k] = 0;
+    request.iex_symbol_best_bid_size[k] = 0;
+    request.iex_symbol_best_offer_price[k] = 0;
+    request.iex_symbol_best_offer_size[k] = 0;
   }
   return request;
 }

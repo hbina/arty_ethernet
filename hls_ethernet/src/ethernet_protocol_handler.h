@@ -11,7 +11,9 @@
 enum ProtocolState {
   PROTO_IDLE = 0,
   PROTO_PARSE_ARP = 1,
-  PROTO_PREPARE_TX = 2
+  PROTO_PREPARE_TX = 2,
+  PROTO_PARSE_IEX = 3,
+  PROTO_CALC_VWAP = 4
 };
 
 static bool ethernet_dst_is_multicast(ap_uint<48> mac) {
@@ -57,6 +59,20 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
   static ap_uint<32> iex_aapl_match_count = 0;
   static ap_uint<32> iex_symbol_match_counts[20] = {0};
 #pragma HLS ARRAY_PARTITION variable = iex_symbol_match_counts complete
+  static ap_uint<64> committed_best_bid_price[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_best_bid_price complete
+  static ap_uint<32> committed_best_bid_size[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_best_bid_size complete
+  static ap_uint<64> committed_best_offer_price[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_best_offer_price complete
+  static ap_uint<32> committed_best_offer_size[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_best_offer_size complete
+  static ap_uint<128> committed_accum_value[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_accum_value complete
+  static ap_uint<64> committed_accum_volume[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_accum_volume complete
+  static ap_uint<64> committed_vwap[20] = {0};
+#pragma HLS ARRAY_PARTITION variable = committed_vwap complete
   static ap_uint<32> uptime_beacon_count = 0;
   static ap_uint<RX_PACKET_INDEX_BITS> parse_rx_idx = 0;
   static ap_uint<5> parse_index = 0;
@@ -68,6 +84,24 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
   static ap_uint<48> parse_arp_sender_mac = 0;
   static ap_uint<32> parse_arp_sender_ip = 0;
   static ap_uint<32> parse_arp_target_ip = 0;
+
+  static ap_uint<4> iex_substate = 0;
+  static ap_uint<11> iex_msg_offset = 0;
+  static ap_uint<16> iex_msg_len = 0;
+  static ap_uint<11> iex_byte_idx = 0;
+  static ap_uint<16> iex_msgs_left = 0;
+  static ap_uint<8> iex_msg_type = 0;
+  static ap_uint<64> iex_price = 0;
+  static ap_uint<32> iex_size = 0;
+  static ap_uint<8> iex_symbol[8] = {0};
+#pragma HLS ARRAY_PARTITION variable = iex_symbol complete
+
+  static ap_uint<5> div_symbol_idx = 0;
+  static ap_uint<8> div_bit_idx = 0;
+  static ap_uint<128> div_rem = 0;
+  static ap_uint<128> div_quot = 0;
+  static ap_uint<64> div_denom = 0;
+  static ap_uint<128> div_num = 0;
 
   PeriodicTxTicks tx_ticks = periodic_tx_timer_step();
 
@@ -112,10 +146,14 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
             frame_match_sum += cnt;
           }
           iex_aapl_match_count += frame_match_sum;
+
+          parse_rx_idx = read_idx;
+          iex_substate = 0;
+          protocol_state = PROTO_PARSE_IEX;
         } else {
           rx_protocol_drop_count++;
+          packet_queue_consume_read_slot(rx_queue);
         }
-        packet_queue_consume_read_slot(rx_queue);
       } else {
         rx_protocol_drop_count++;
         packet_queue_consume_read_slot(rx_queue);
@@ -130,28 +168,13 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
           prepare_index,
           prepare_tx_idx);
     } else if (tx_ticks.beacon_tick) {
-      ProtocolTxRequest request = protocol_tx_beacon_request();
-      request.rx_packet_count = rx_packet_count;
-      request.rx_queue_drop_count = packet_queue_drop_count(rx_queue);
-      request.rx_protocol_drop_count = rx_protocol_drop_count;
-      request.tx_drop_count = packet_queue_drop_count(tx_queue);
-      request.arp_reply_count = arp_reply_count;
-      request.udp_reply_count = iex_aapl_match_count;
-      request.uptime_beacon_count = uptime_beacon_count;
-      for (int k = 0; k < 20; ++k) {
-#pragma HLS UNROLL
-        request.iex_symbol_match_counts[k] = iex_symbol_match_counts[k];
-      }
-      start_protocol_tx_request(
-          request,
-          tx_queue,
-          preparing_payload,
-          prepare_request,
-          prepare_index,
-          prepare_tx_idx);
-      if (preparing_payload) {
-        uptime_beacon_count++;
-      }
+      protocol_state = PROTO_CALC_VWAP;
+      div_symbol_idx = 0;
+      div_bit_idx = 0;
+      div_rem = 0;
+      div_quot = 0;
+      div_denom = committed_accum_volume[0];
+      div_num = committed_accum_value[0];
     }
   } else if (!preparing_payload && protocol_state == PROTO_PARSE_ARP) {
     unsigned parse_rx_idx_int = parse_rx_idx;
@@ -267,6 +290,214 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
       protocol_state = PROTO_IDLE;
     } else {
       parse_index++;
+    }
+  } else if (!preparing_payload && protocol_state == PROTO_PARSE_IEX) {
+    unsigned parse_rx_idx_int = parse_rx_idx;
+
+    if (iex_substate == 0) {
+      ap_uint<4> ihl = rx_queue.bytes[parse_rx_idx_int][0].range(3, 0);
+      iex_msg_offset = (ap_uint<11>(ihl) << 2) + UDP_HEADER_BYTES;
+      iex_substate = 1;
+    } else if (iex_substate == 1) {
+      iex_msgs_left.range(7, 0) =
+          rx_queue.bytes[parse_rx_idx_int]
+                        [iex_msg_offset + IEX_TP_MESSAGE_COUNT_OFFSET];
+      iex_substate = 2;
+    } else if (iex_substate == 2) {
+      iex_msgs_left.range(15, 8) =
+          rx_queue.bytes[parse_rx_idx_int]
+                        [iex_msg_offset + IEX_TP_MESSAGE_COUNT_OFFSET + 1];
+      iex_msg_offset += IEX_TP_HEADER_BYTES;
+      if (iex_msgs_left == 0) {
+        packet_queue_consume_read_slot(rx_queue);
+        protocol_state = PROTO_IDLE;
+      } else {
+        iex_substate = 3;
+      }
+    } else if (iex_substate == 3) {
+      iex_msg_len.range(7, 0) =
+          rx_queue.bytes[parse_rx_idx_int][iex_msg_offset];
+      iex_substate = 4;
+    } else if (iex_substate == 4) {
+      iex_msg_len.range(15, 8) =
+          rx_queue.bytes[parse_rx_idx_int][iex_msg_offset + 1];
+      iex_byte_idx = 0;
+      iex_size = 0;
+      iex_price = 0;
+      for (int i = 0; i < IEX_SYMBOL_BYTES; ++i) {
+#pragma HLS UNROLL
+        iex_symbol[i] = 0;
+      }
+      iex_substate = 5;
+    } else if (iex_substate == 5) {
+      if (iex_byte_idx < iex_msg_len) {
+        ap_uint<8> data_byte =
+            rx_queue.bytes[parse_rx_idx_int]
+                          [iex_msg_offset + IEX_MESSAGE_BLOCK_HEADER_BYTES +
+                           iex_byte_idx];
+        if (iex_byte_idx == 0) {
+          iex_msg_type = data_byte;
+        } else if (
+            iex_byte_idx >= IEX_SYMBOL_OFFSET &&
+            iex_byte_idx < IEX_SYMBOL_OFFSET + IEX_SYMBOL_BYTES) {
+          iex_symbol[iex_byte_idx - IEX_SYMBOL_OFFSET] = data_byte;
+        } else if (iex_byte_idx >= 18 && iex_byte_idx < 22) {
+          iex_size.range((iex_byte_idx - 18) * 8 + 7, (iex_byte_idx - 18) * 8) =
+              data_byte;
+        } else if (iex_byte_idx >= 22 && iex_byte_idx < 30) {
+          iex_price.range(
+              (iex_byte_idx - 22) * 8 + 7,
+              (iex_byte_idx - 22) * 8) = data_byte;
+        }
+      }
+
+      if (iex_byte_idx == iex_msg_len) {
+        if (iex_msg_type == IEX_MSG_TYPE_PRICE_BUY ||
+            iex_msg_type == IEX_MSG_TYPE_PRICE_SELL ||
+            iex_msg_type == IEX_MSG_TYPE_TRADE_REPORT) {
+          for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+            bool match = true;
+            for (int i = 0; i < IEX_SYMBOL_BYTES; ++i) {
+#pragma HLS UNROLL
+              match = match && (iex_symbol[i] == TOP_20_SYMBOLS[k][i]);
+            }
+            if (match) {
+              if (iex_msg_type == IEX_MSG_TYPE_PRICE_BUY) {
+                if (iex_size == 0 && iex_price == committed_best_bid_price[k]) {
+                  committed_best_bid_price[k] = 0;
+                  committed_best_bid_size[k] = 0;
+                } else if (
+                    iex_size > 0 && (iex_price >= committed_best_bid_price[k] ||
+                                     committed_best_bid_size[k] == 0)) {
+                  committed_best_bid_price[k] = iex_price;
+                  committed_best_bid_size[k] = iex_size;
+                }
+              } else if (iex_msg_type == IEX_MSG_TYPE_PRICE_SELL) {
+                if (iex_size == 0 &&
+                    iex_price == committed_best_offer_price[k]) {
+                  committed_best_offer_price[k] = 0;
+                  committed_best_offer_size[k] = 0;
+                } else if (
+                    iex_size > 0 &&
+                    (iex_price <= committed_best_offer_price[k] ||
+                     committed_best_offer_size[k] == 0)) {
+                  committed_best_offer_price[k] = iex_price;
+                  committed_best_offer_size[k] = iex_size;
+                }
+              } else if (iex_msg_type == IEX_MSG_TYPE_TRADE_REPORT) {
+                committed_accum_volume[k] += iex_size;
+                committed_accum_value[k] += (ap_uint<128>)iex_price * iex_size;
+              }
+            }
+          }
+        }
+
+        iex_msg_offset += IEX_MESSAGE_BLOCK_HEADER_BYTES + iex_msg_len;
+        iex_msgs_left--;
+        if (iex_msgs_left == 0) {
+          packet_queue_consume_read_slot(rx_queue);
+          protocol_state = PROTO_IDLE;
+        } else {
+          iex_substate = 3;
+        }
+      } else {
+        iex_byte_idx++;
+      }
+    }
+  } else if (!preparing_payload && protocol_state == PROTO_CALC_VWAP) {
+    if (div_denom == 0) {
+      committed_vwap[div_symbol_idx] = 0;
+      div_symbol_idx++;
+      if (div_symbol_idx == 20) {
+        ProtocolTxRequest request = protocol_tx_beacon_request();
+        request.rx_packet_count = rx_packet_count;
+        request.rx_queue_drop_count = packet_queue_drop_count(rx_queue);
+        request.rx_protocol_drop_count = rx_protocol_drop_count;
+        request.tx_drop_count = packet_queue_drop_count(tx_queue);
+        request.arp_reply_count = arp_reply_count;
+        request.udp_reply_count = iex_aapl_match_count;
+        request.uptime_beacon_count = uptime_beacon_count;
+        for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+          request.iex_symbol_match_counts[k] = iex_symbol_match_counts[k];
+          request.iex_symbol_vwap[k] = committed_vwap[k].range(31, 0);
+          request.iex_symbol_best_bid_price[k] =
+              committed_best_bid_price[k].range(31, 0);
+          request.iex_symbol_best_bid_size[k] = committed_best_bid_size[k];
+          request.iex_symbol_best_offer_price[k] =
+              committed_best_offer_price[k].range(31, 0);
+          request.iex_symbol_best_offer_size[k] = committed_best_offer_size[k];
+        }
+        start_protocol_tx_request(
+            request,
+            tx_queue,
+            preparing_payload,
+            prepare_request,
+            prepare_index,
+            prepare_tx_idx);
+        if (preparing_payload) {
+          uptime_beacon_count++;
+        }
+        protocol_state = PROTO_IDLE;
+      } else {
+        div_bit_idx = 0;
+        div_rem = 0;
+        div_quot = 0;
+        div_denom = committed_accum_volume[div_symbol_idx];
+        div_num = committed_accum_value[div_symbol_idx];
+      }
+    } else {
+      div_rem =
+          (div_rem << 1) | div_num.range(127 - div_bit_idx, 127 - div_bit_idx);
+      if (div_rem >= (ap_uint<128>)div_denom) {
+        div_rem -= div_denom;
+        div_quot.range(127 - div_bit_idx, 127 - div_bit_idx) = 1;
+      }
+      div_bit_idx++;
+      if (div_bit_idx == 128) {
+        committed_vwap[div_symbol_idx] = div_quot.range(63, 0);
+        div_symbol_idx++;
+        if (div_symbol_idx == 20) {
+          ProtocolTxRequest request = protocol_tx_beacon_request();
+          request.rx_packet_count = rx_packet_count;
+          request.rx_queue_drop_count = packet_queue_drop_count(rx_queue);
+          request.rx_protocol_drop_count = rx_protocol_drop_count;
+          request.tx_drop_count = packet_queue_drop_count(tx_queue);
+          request.arp_reply_count = arp_reply_count;
+          request.udp_reply_count = iex_aapl_match_count;
+          request.uptime_beacon_count = uptime_beacon_count;
+          for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+            request.iex_symbol_match_counts[k] = iex_symbol_match_counts[k];
+            request.iex_symbol_vwap[k] = committed_vwap[k].range(31, 0);
+            request.iex_symbol_best_bid_price[k] =
+                committed_best_bid_price[k].range(31, 0);
+            request.iex_symbol_best_bid_size[k] = committed_best_bid_size[k];
+            request.iex_symbol_best_offer_price[k] =
+                committed_best_offer_price[k].range(31, 0);
+            request.iex_symbol_best_offer_size[k] =
+                committed_best_offer_size[k];
+          }
+          start_protocol_tx_request(
+              request,
+              tx_queue,
+              preparing_payload,
+              prepare_request,
+              prepare_index,
+              prepare_tx_idx);
+          if (preparing_payload) {
+            uptime_beacon_count++;
+          }
+          protocol_state = PROTO_IDLE;
+        } else {
+          div_bit_idx = 0;
+          div_rem = 0;
+          div_quot = 0;
+          div_denom = committed_accum_volume[div_symbol_idx];
+          div_num = committed_accum_value[div_symbol_idx];
+        }
+      }
     }
   }
 

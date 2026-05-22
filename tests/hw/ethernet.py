@@ -167,11 +167,19 @@ def is_beacon_payload(payload):
     if values["IP"] != "192.168.001.100" or values["MAC"] != "020000000001":
         return False
 
-    hex_keys = base_keys[3:] + ticker_keys
-    return all(
-        len(values[key]) == 8 and all(c in "0123456789ABCDEF" for c in values[key].upper())
-        for key in hex_keys
-    )
+    for key in base_keys[3:]:
+        if len(values[key]) != 8 or not all(c in "0123456789ABCDEF" for c in values[key].upper()):
+            return False
+
+    for key in ticker_keys:
+        parts = values[key].split(":")
+        if len(parts) != 6:
+            return False
+        for part in parts:
+            if len(part) != 8 or not all(c in "0123456789ABCDEF" for c in part.upper()):
+                return False
+
+    return True
 
 
 class RawEthernet:
