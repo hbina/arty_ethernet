@@ -177,10 +177,28 @@ static void append_eth_fcs(std::vector<uint8_t> &frame) {
 
 static uint16_t
 ipv4_header_checksum(const std::vector<uint8_t> &frame, unsigned ip) {
+  unsigned header_bytes = (frame[ip] & 0x0f) * 4;
   uint32_t sum = 0;
-  for (unsigned i = 0; i < 20; i += 2) {
+  for (unsigned i = 0; i < header_bytes; i += 2) {
     if (i != 10) {
       sum += read_be16(frame, ip + i);
+    }
+  }
+  while (sum >> 16) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  return (uint16_t)~sum;
+}
+
+static uint16_t checksum16(
+    const std::vector<uint8_t> &frame,
+    unsigned first,
+    unsigned count,
+    unsigned checksum_offset) {
+  uint32_t sum = 0;
+  for (unsigned i = 0; i < count; i += 2) {
+    if (i != checksum_offset) {
+      sum += read_be16(frame, first + i);
     }
   }
   while (sum >> 16) {
@@ -398,6 +416,64 @@ static void assert_valid_gratuitous_arp(const std::vector<uint8_t> &frame) {
       {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
       {192, 168, 1, 100},
       true);
+}
+
+static void assert_valid_igmp_report(const std::vector<uint8_t> &frame) {
+  const unsigned body_len = 60;
+  if (frame.size() != 8 + body_len + 4) {
+    std::fprintf(
+        stderr,
+        "bad IGMP frame size: expected %u got %u\n",
+        8 + body_len + 4,
+        (unsigned)frame.size());
+  }
+  assert(frame.size() == 8 + body_len + 4);
+
+  const unsigned eth = 8;
+  const uint8_t dst_mac[] = {0x01, 0x00, 0x5e, 0x57, 0x15, 0x04};
+  const uint8_t fpga_mac[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+  for (unsigned i = 0; i < 6; ++i) {
+    assert(frame[eth + i] == dst_mac[i]);
+    assert(frame[eth + 6 + i] == fpga_mac[i]);
+  }
+  assert(frame[eth + 12] == 0x08);
+  assert(frame[eth + 13] == 0x00);
+
+  const unsigned ip = eth + 14;
+  assert(frame[ip + 0] == 0x46);
+  assert(frame[ip + 1] == 0x00);
+  assert(read_be16(frame, ip + 2) == 32);
+  assert(read_be16(frame, ip + 4) == 0);
+  assert(read_be16(frame, ip + 6) == 0);
+  assert(frame[ip + 8] == 1);
+  assert(frame[ip + 9] == IGMP_PROTOCOL);
+  assert(read_be16(frame, ip + 10) == ipv4_header_checksum(frame, ip));
+  assert(frame[ip + 12] == 192);
+  assert(frame[ip + 13] == 168);
+  assert(frame[ip + 14] == 1);
+  assert(frame[ip + 15] == 100);
+  assert(frame[ip + 16] == 233);
+  assert(frame[ip + 17] == 215);
+  assert(frame[ip + 18] == 21);
+  assert(frame[ip + 19] == 4);
+  assert(frame[ip + 20] == 0x94);
+  assert(frame[ip + 21] == 0x04);
+  assert(frame[ip + 22] == 0x00);
+  assert(frame[ip + 23] == 0x00);
+
+  const unsigned igmp = ip + 24;
+  assert(frame[igmp + 0] == IGMP_V2_MEMBERSHIP_REPORT);
+  assert(frame[igmp + 1] == 0x00);
+  assert(read_be16(frame, igmp + 2) == checksum16(frame, igmp, 8, 2));
+  assert(frame[igmp + 4] == 233);
+  assert(frame[igmp + 5] == 215);
+  assert(frame[igmp + 6] == 21);
+  assert(frame[igmp + 7] == 4);
+
+  for (unsigned i = 46; i < 60; ++i) {
+    assert(frame[eth + i] == 0x00);
+  }
+  assert_fcs(frame, eth, body_len);
 }
 
 static void assert_valid_test_frame(
@@ -744,26 +820,40 @@ static void test_gratuitous_arp_request_builder() {
   assert_valid_gratuitous_arp(tx_frame_from_request(request));
 }
 
+static void test_igmp_report_request_builder() {
+  assert(ipv4_multicast_mac(0xE9D71504) == 0x01005E571504ULL);
+  ProtocolTxRequest request = protocol_tx_igmp_report_request(0xE9D71504);
+  assert(request.header.dst_mac == 0x01005E571504ULL);
+  assert(request.header.ethertype == IPV4_ETHERTYPE);
+  assert(request.igmp_group_ip == 0xE9D71504);
+  assert_valid_igmp_report(tx_frame_from_request(request));
+}
+
 static void test_periodic_tx_timer_ticks() {
   PeriodicTxTicks ticks = periodic_tx_timer_step();
   assert(!ticks.beacon_tick);
   assert(!ticks.gratuitous_arp_tick);
+  assert(!ticks.igmp_report_tick);
 
   ticks = periodic_tx_timer_step();
   assert(!ticks.beacon_tick);
   assert(!ticks.gratuitous_arp_tick);
+  assert(!ticks.igmp_report_tick);
 
   ticks = periodic_tx_timer_step();
   assert(!ticks.beacon_tick);
   assert(!ticks.gratuitous_arp_tick);
+  assert(!ticks.igmp_report_tick);
 
   ticks = periodic_tx_timer_step();
   assert(!ticks.beacon_tick);
   assert(!ticks.gratuitous_arp_tick);
+  assert(!ticks.igmp_report_tick);
 
   ticks = periodic_tx_timer_step();
   assert(!ticks.beacon_tick);
   assert(!ticks.gratuitous_arp_tick);
+  assert(!ticks.igmp_report_tick);
 
   ap_uint<32> beacon_count = BEACON_INTERVAL_CYCLES - 1;
   assert(periodic_counter_tick(BEACON_INTERVAL_CYCLES, beacon_count));
@@ -780,6 +870,13 @@ static void test_periodic_tx_timer_ticks() {
       GRATUITOUS_ARP_INTERVAL_CYCLES,
       gratuitous_arp_count));
   assert(gratuitous_arp_count == 1);
+
+  ap_uint<32> igmp_report_count = IGMP_REPORT_INTERVAL_CYCLES - 1;
+  assert(periodic_counter_tick(IGMP_REPORT_INTERVAL_CYCLES, igmp_report_count));
+  assert(igmp_report_count == 0);
+  assert(
+      !periodic_counter_tick(IGMP_REPORT_INTERVAL_CYCLES, igmp_report_count));
+  assert(igmp_report_count == 1);
 }
 
 static RxPacketMeta test_rx_meta(unsigned index) {
@@ -871,7 +968,8 @@ int main() {
   ap_uint<1> tx_en = 0, tx_frame = 0, rx_active = 0, tx_active = 0;
   ap_uint<4> txd = 0;
 
-  assert_no_tx_frame(512);
+  std::vector<uint8_t> startup_igmp_report = collect_tx_frame(512);
+  assert_valid_igmp_report(startup_igmp_report);
 
   for (int i = 0; i < 16; ++i) {
     step(0, 0, 0, tx_en, txd, tx_frame, rx_active, tx_active);
@@ -959,6 +1057,7 @@ int main() {
   test_rx_parser_counts_iex_top_20_messages();
   test_beacon_payload_fields();
   test_gratuitous_arp_request_builder();
+  test_igmp_report_request_builder();
   test_periodic_tx_timer_ticks();
   test_rx_packet_slot_queue_helpers();
   test_tx_packet_slot_queue_helpers();

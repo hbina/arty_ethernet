@@ -74,6 +74,9 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
   static ap_uint<64> committed_vwap[20] = {0};
 #pragma HLS ARRAY_PARTITION variable = committed_vwap complete
   static ap_uint<32> uptime_beacon_count = 0;
+  static bool igmp_startup_pending = true;
+  static bool igmp_report_pending = false;
+  static ap_uint<8> igmp_report_index = 0;
   static ap_uint<RX_PACKET_INDEX_BITS> parse_rx_idx = 0;
   static ap_uint<5> parse_index = 0;
   static ap_uint<16> parse_arp_hw_type = 0;
@@ -104,12 +107,48 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
   static ap_uint<128> div_num = 0;
 
   PeriodicTxTicks tx_ticks = periodic_tx_timer_step();
+  if (tx_ticks.igmp_report_tick && !igmp_report_pending) {
+    igmp_report_pending = true;
+    igmp_report_index = 0;
+  }
 
   if (!preparing_payload && protocol_state == PROTO_IDLE) {
     ap_uint<RX_PACKET_INDEX_BITS> read_idx = packet_queue_read_slot(rx_queue);
     unsigned read_idx_int = read_idx;
+    bool priority_tx_started = false;
 
-    if (packet_queue_read_slot_valid(rx_queue)) {
+    if (igmp_startup_pending || igmp_report_pending) {
+      if (!igmp_report_pending) {
+        igmp_report_pending = true;
+        igmp_report_index = 0;
+        igmp_startup_pending = false;
+      }
+
+      if (igmp_report_index < MULTICAST_GROUP_COUNT &&
+          packet_queue_write_slot_available(tx_queue)) {
+        unsigned group_index = igmp_report_index;
+        ProtocolTxRequest request =
+            protocol_tx_igmp_report_request(MULTICAST_GROUP_IPS[group_index]);
+        start_protocol_tx_request(
+            request,
+            tx_queue,
+            preparing_payload,
+            prepare_request,
+            prepare_index,
+            prepare_tx_idx);
+        if (preparing_payload) {
+          priority_tx_started = true;
+          igmp_report_index++;
+          if (igmp_report_index == MULTICAST_GROUP_COUNT) {
+            igmp_report_pending = false;
+          }
+        }
+      } else if (igmp_report_index >= MULTICAST_GROUP_COUNT) {
+        igmp_report_pending = false;
+      }
+    }
+
+    if (!priority_tx_started && packet_queue_read_slot_valid(rx_queue)) {
       EthHeader header = rx_queue.meta[read_idx_int].header;
       ap_uint<11> payload_len = rx_queue.meta[read_idx_int].payload_len;
       bool iex_deep = rx_queue.meta[read_idx_int].iex_deep;
@@ -158,7 +197,7 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
         rx_protocol_drop_count++;
         packet_queue_consume_read_slot(rx_queue);
       }
-    } else if (tx_ticks.gratuitous_arp_tick) {
+    } else if (!priority_tx_started && tx_ticks.gratuitous_arp_tick) {
       ProtocolTxRequest request = protocol_tx_gratuitous_arp_request();
       start_protocol_tx_request(
           request,
@@ -167,7 +206,7 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
           prepare_request,
           prepare_index,
           prepare_tx_idx);
-    } else if (tx_ticks.beacon_tick) {
+    } else if (!priority_tx_started && tx_ticks.beacon_tick) {
       protocol_state = PROTO_CALC_VWAP;
       div_symbol_idx = 0;
       div_bit_idx = 0;
@@ -268,6 +307,7 @@ protocol_queue_step(RxPacketQueue &rx_queue, TxPacketQueue &tx_queue) {
         request.kind = PROTO_TX_ARP_REPLY;
         request.arp_requester_mac = parse_arp_sender_mac;
         request.arp_requester_ip = parse_arp_sender_ip;
+        request.igmp_group_ip = 0;
         request.rx_packet_count = 0;
         request.rx_queue_drop_count = 0;
         request.rx_protocol_drop_count = 0;

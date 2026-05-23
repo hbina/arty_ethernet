@@ -7,6 +7,7 @@
 struct PeriodicTxTicks {
   bool beacon_tick;
   bool gratuitous_arp_tick;
+  bool igmp_report_tick;
 };
 
 static bool
@@ -25,6 +26,7 @@ static PeriodicTxTicks periodic_tx_timer_step() {
 #pragma HLS INLINE
   static ap_uint<32> beacon_count = 0;
   static ap_uint<32> gratuitous_arp_count = 0;
+  static ap_uint<32> igmp_report_count = 0;
 
   PeriodicTxTicks ticks;
   ticks.beacon_tick =
@@ -32,6 +34,8 @@ static PeriodicTxTicks periodic_tx_timer_step() {
   ticks.gratuitous_arp_tick = periodic_counter_tick(
       GRATUITOUS_ARP_INTERVAL_CYCLES,
       gratuitous_arp_count);
+  ticks.igmp_report_tick =
+      periodic_counter_tick(IGMP_REPORT_INTERVAL_CYCLES, igmp_report_count);
   return ticks;
 }
 

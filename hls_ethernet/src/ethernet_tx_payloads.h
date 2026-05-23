@@ -11,7 +11,8 @@ enum ProtocolTxKind {
   PROTO_TX_NONE = 0,
   PROTO_TX_BEACON = 2,
   PROTO_TX_ARP_REPLY = 3,
-  PROTO_TX_GRATUITOUS_ARP = 4
+  PROTO_TX_GRATUITOUS_ARP = 4,
+  PROTO_TX_IGMP_REPORT = 5
 };
 
 struct ProtocolTxRequest {
@@ -21,6 +22,7 @@ struct ProtocolTxRequest {
   ProtocolTxKind kind;
   ap_uint<48> arp_requester_mac;
   ap_uint<32> arp_requester_ip;
+  ap_uint<32> igmp_group_ip;
   ap_uint<32> rx_packet_count;
   ap_uint<32> rx_queue_drop_count;
   ap_uint<32> rx_protocol_drop_count;
@@ -35,6 +37,11 @@ struct ProtocolTxRequest {
   ap_uint<32> iex_symbol_best_offer_price[20];
   ap_uint<32> iex_symbol_best_offer_size[20];
 };
+
+static ap_uint<48> ipv4_multicast_mac(ap_uint<32> group_ip) {
+#pragma HLS INLINE
+  return (ap_uint<48>(0x01005E) << 24) | (group_ip & 0x007FFFFF);
+}
 
 static ap_uint<8> hex_digit_byte(ap_uint<4> value) {
 #pragma HLS INLINE
@@ -271,6 +278,9 @@ static ap_uint<11> protocol_tx_payload_len(ProtocolTxKind request_kind) {
       request_kind == PROTO_TX_GRATUITOUS_ARP) {
     return ARP_PAYLOAD_BYTES;
   }
+  if (request_kind == PROTO_TX_IGMP_REPORT) {
+    return 32;
+  }
   return 0;
 }
 
@@ -327,6 +337,110 @@ static ap_uint<8> beacon_ticker_payload_byte(
   }
 }
 
+static ap_uint<16> checksum_fold_not(ap_uint<32> sum) {
+#pragma HLS INLINE
+  ap_uint<32> folded = (sum & 0xffff) + (sum >> 16);
+  folded = (folded & 0xffff) + (folded >> 16);
+  return ~folded;
+}
+
+static ap_uint<16> igmp_ipv4_header_checksum(ap_uint<32> group_ip) {
+#pragma HLS INLINE
+  ap_uint<32> sum = 0;
+  sum += 0x4600;
+  sum += protocol_tx_payload_len(PROTO_TX_IGMP_REPORT);
+  sum += 0x0000;
+  sum += 0x0000;
+  sum += (ap_uint<16>(1) << 8) | IGMP_PROTOCOL;
+  sum += FPGA_IP.range(31, 16);
+  sum += FPGA_IP.range(15, 0);
+  sum += group_ip.range(31, 16);
+  sum += group_ip.range(15, 0);
+  sum += 0x9404;
+  sum += 0x0000;
+  return checksum_fold_not(sum);
+}
+
+static ap_uint<16> igmp_report_checksum(ap_uint<32> group_ip) {
+#pragma HLS INLINE
+  ap_uint<32> sum = 0;
+  sum += (ap_uint<16>(IGMP_V2_MEMBERSHIP_REPORT) << 8);
+  sum += 0x0000;
+  sum += group_ip.range(31, 16);
+  sum += group_ip.range(15, 0);
+  return checksum_fold_not(sum);
+}
+
+static ap_uint<8>
+igmp_report_payload_byte(ap_uint<6> index, ap_uint<32> group_ip) {
+#pragma HLS INLINE
+  ap_uint<16> ipv4_checksum = igmp_ipv4_header_checksum(group_ip);
+  ap_uint<16> igmp_checksum = igmp_report_checksum(group_ip);
+
+  switch ((unsigned)index) {
+  case 0:
+    return 0x46;
+  case 1:
+    return 0x00;
+  case 2:
+    return 0x00;
+  case 3:
+    return protocol_tx_payload_len(PROTO_TX_IGMP_REPORT).range(7, 0);
+  case 4:
+  case 5:
+  case 6:
+  case 7:
+    return 0x00;
+  case 8:
+    return 0x01;
+  case 9:
+    return IGMP_PROTOCOL;
+  case 10:
+    return ipv4_checksum.range(15, 8);
+  case 11:
+    return ipv4_checksum.range(7, 0);
+  case 12:
+    return FPGA_IP.range(31, 24);
+  case 13:
+    return FPGA_IP.range(23, 16);
+  case 14:
+    return FPGA_IP.range(15, 8);
+  case 15:
+    return FPGA_IP.range(7, 0);
+  case 16:
+    return group_ip.range(31, 24);
+  case 17:
+    return group_ip.range(23, 16);
+  case 18:
+    return group_ip.range(15, 8);
+  case 19:
+    return group_ip.range(7, 0);
+  case 20:
+    return 0x94;
+  case 21:
+    return 0x04;
+  case 22:
+  case 23:
+    return 0x00;
+  case 24:
+    return IGMP_V2_MEMBERSHIP_REPORT;
+  case 25:
+    return 0x00;
+  case 26:
+    return igmp_checksum.range(15, 8);
+  case 27:
+    return igmp_checksum.range(7, 0);
+  case 28:
+    return group_ip.range(31, 24);
+  case 29:
+    return group_ip.range(23, 16);
+  case 30:
+    return group_ip.range(15, 8);
+  default:
+    return group_ip.range(7, 0);
+  }
+}
+
 static ap_uint<8>
 protocol_tx_payload_byte(const ProtocolTxRequest &request, ap_uint<11> index) {
 #pragma HLS INLINE
@@ -346,6 +460,8 @@ protocol_tx_payload_byte(const ProtocolTxRequest &request, ap_uint<11> index) {
         index,
         request.arp_requester_mac,
         request.arp_requester_ip);
+  } else if (request_kind == PROTO_TX_IGMP_REPORT) {
+    payload_byte = igmp_report_payload_byte(index, request.igmp_group_ip);
   }
 
   return payload_byte;
@@ -383,6 +499,7 @@ static ProtocolTxRequest protocol_tx_beacon_request() {
   request.kind = PROTO_TX_BEACON;
   request.arp_requester_mac = 0;
   request.arp_requester_ip = 0;
+  request.igmp_group_ip = 0;
   request.rx_packet_count = 0;
   request.rx_queue_drop_count = 0;
   request.rx_protocol_drop_count = 0;
@@ -413,6 +530,38 @@ static ProtocolTxRequest protocol_tx_gratuitous_arp_request() {
   request.kind = PROTO_TX_GRATUITOUS_ARP;
   request.arp_requester_mac = BROADCAST_MAC;
   request.arp_requester_ip = FPGA_IP;
+  request.igmp_group_ip = 0;
+  request.rx_packet_count = 0;
+  request.rx_queue_drop_count = 0;
+  request.rx_protocol_drop_count = 0;
+  request.tx_drop_count = 0;
+  request.arp_reply_count = 0;
+  request.udp_reply_count = 0;
+  request.uptime_beacon_count = 0;
+  for (int k = 0; k < 20; ++k) {
+#pragma HLS UNROLL
+    request.iex_symbol_match_counts[k] = 0;
+    request.iex_symbol_vwap[k] = 0;
+    request.iex_symbol_best_bid_price[k] = 0;
+    request.iex_symbol_best_bid_size[k] = 0;
+    request.iex_symbol_best_offer_price[k] = 0;
+    request.iex_symbol_best_offer_size[k] = 0;
+  }
+  return request;
+}
+
+static ProtocolTxRequest protocol_tx_igmp_report_request(ap_uint<32> group_ip) {
+#pragma HLS INLINE
+  ProtocolTxRequest request;
+  request.valid = true;
+  request.header.dst_mac = ipv4_multicast_mac(group_ip);
+  request.header.src_mac = FPGA_MAC;
+  request.header.ethertype = IPV4_ETHERTYPE;
+  request.len = protocol_tx_frame_body_len(PROTO_TX_IGMP_REPORT);
+  request.kind = PROTO_TX_IGMP_REPORT;
+  request.arp_requester_mac = 0;
+  request.arp_requester_ip = 0;
+  request.igmp_group_ip = group_ip;
   request.rx_packet_count = 0;
   request.rx_queue_drop_count = 0;
   request.rx_protocol_drop_count = 0;
