@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Board and Flow
 
-Target hardware is a verified Digilent Arty A7-**100T** (`xc7a100t_0`, build part `xc7a100ticsg324-1L`, cable `Digilent/210319BE1CD4A`). Do not assume 35T. If hardware changes, re-probe with `make hw-server HW_PORT=3124` then `make probe-board HW_PORT=3124` in a second terminal.
+Target hardware is a verified Digilent Arty A7-**100T** (`xc7a100t_0`, build part `xc7a100ticsg324-1L`, cable `Digilent/210319BE1CD4A`). Do not assume 35T. If hardware changes, re-probe with `python3 build.py hw-server --hw-port 3124` then `python3 build.py probe --hw-port 3124` in a second terminal.
 
 The flow is Vitis HLS C++ → Verilog RTL → Vivado place/route → bitstream. There is no MicroBlaze, no soft CPU, no firmware ELF, and `v++` is not used. Do not convert this into a software/SoC project unless explicitly asked. New FPGA behavior should be implemented as HLS C++ under `hls_ethernet/src/` with a C testbench under `hls_ethernet/tb/`; reserve handwritten Verilog for thin top-level wrappers, clock/reset plumbing, or cases where HLS is demonstrably unsuitable (document the reason).
 
 ## Toolchain
 
-Xilinx tools live at `/home/hbina085/Xilinx/2025.2`. The Makefile invokes them as:
+Xilinx tools live at `/home/hbina085/Xilinx/2025.2`. The Python CLI invokes them as:
 
 - HLS synthesis: `Vitis/bin/vitis-run --mode hls --tcl ...` (prefer this; direct `vitis_hls` is awkward in this install)
 - Vivado implementation/programming: `Vivado/bin/vivado -mode batch -source ...`
@@ -19,17 +19,17 @@ Xilinx tools live at `/home/hbina085/Xilinx/2025.2`. The Makefile invokes them a
 ## Common Commands
 
 ```sh
-make hls                                    # HLS C-sim + C-synth for both HLS blocks
-make hls-bit                                # Full bitstream: HLS then Vivado P&R → hls_ethernet/build/hls_ethernet.bit
-make hw-server HW_PORT=3124                 # Start hw_server (run in its own terminal)
-make probe-board HW_PORT=3124               # Verify xc7a100t target exists
-make program-vivado HW_PORT=3124            # Program the FPGA (checks for xc7a100t first)
-make clean                                  # Remove build/, hls_ethernet/build/, .Xil/, vivado logs
-make bit                                    # Older RTL-only status_led (rtl/status_led.v) — reference only
-PART=xc7a35ticsg324-1L make hls-bit         # Override part for an Arty A7-35T
+python3 build.py hls                                    # HLS C-sim + C-synth for both HLS blocks
+python3 build.py build                                # Full bitstream: HLS then Vivado P&R → hls_ethernet/build/hls_ethernet.bit
+python3 build.py hw-server --hw-port 3124                 # Start hw_server (run in its own terminal)
+python3 build.py probe --hw-port 3124               # Verify xc7a100t target exists
+python3 build.py program --hw-port 3124            # Program the FPGA (checks for xc7a100t first)
+python3 build.py clean                                  # Remove build/, hls_ethernet/build/, .Xil/, vivado logs
+python3 build.py build --design rtl                                    # Older RTL-only status_led (rtl/status_led.v) — reference only
+python3 build.py build --part xc7a35ticsg324-1L         # Override part for an Arty A7-35T
 ```
 
-`HW_PORT` defaults to 3124 in the Makefile. Pick a different free port if needed. Running a single HLS testbench is done via the same `make hls` (both blocks are synthesized/simulated by `hls_ethernet/scripts/run_hls.tcl`); to isolate one, edit that script.
+`--hw-port` defaults to 3124 in the Python CLI. Pick a different free port if needed. Running a single HLS testbench is done via the same `python3 build.py hls` (both blocks are synthesized/simulated by `hls_ethernet/scripts/run_hls.tcl`); to isolate one, edit that script.
 
 After programming, verify the L2 endpoint end-to-end with:
 

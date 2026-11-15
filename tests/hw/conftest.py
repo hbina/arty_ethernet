@@ -1,6 +1,7 @@
 import os
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -19,7 +20,7 @@ def pytest_addoption(parser):
     group.addoption("--program", action="store_true", help="build/program the FPGA before tests")
     group.addoption("--hw-port", default="3124", help="hw_server TCP port for programming")
     group.addoption("--bitfile", default=str(DEFAULT_BITFILE), help="bitstream to program")
-    group.addoption("--no-build", action="store_true", help="skip make hls-bit when --program is set")
+    group.addoption("--no-build", action="store_true", help="skip the bitstream build when --program is set")
     group.addoption("--timeout", type=float, default=8.0, help="Ethernet receive timeout in seconds")
 
 
@@ -38,7 +39,7 @@ def _port_open(port):
 
 def _start_hw_server(port):
     proc = subprocess.Popen(
-        ["make", "hw-server", f"HW_PORT={port}"],
+        [sys.executable, str(REPO_ROOT / "build.py"), "hw-server", "--hw-port", str(port)],
         cwd=REPO_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -66,7 +67,7 @@ def programmed_board(request):
     started_server = None
 
     if not request.config.getoption("--no-build"):
-        _run(["make", "hls-bit"])
+        _run([sys.executable, "build.py", "build"])
 
     if not bitfile.exists():
         pytest.fail(f"bitfile does not exist: {bitfile}")
@@ -75,7 +76,7 @@ def programmed_board(request):
         started_server = _start_hw_server(hw_port)
 
     try:
-        _run(["make", "program-vivado", f"HW_PORT={hw_port}", f"BITFILE={bitfile}"])
+        _run([sys.executable, "build.py", "program", "--hw-port", str(hw_port), "--bitfile", str(bitfile)])
     finally:
         if started_server is not None:
             started_server.terminate()

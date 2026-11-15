@@ -8,13 +8,13 @@ if [ -z "$STAGED_FILES" ]; then
     exit 0
 fi
 
-# Run formatting check via Makefile
-make check-format
+# Run formatting check via the Python CLI
+python3 build.py format --check
 
 if [ $? -ne 0 ]; then
     echo "----------------------------------------------------------------"
     echo "FAIL: C++ formatting check failed."
-    echo "Please run 'make format' to fix formatting and try again."
+    echo "Please run 'python3 build.py format' to fix formatting and try again."
     echo "----------------------------------------------------------------"
     exit 1
 fi
