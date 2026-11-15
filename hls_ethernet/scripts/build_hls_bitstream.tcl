@@ -12,7 +12,7 @@ set ethernet_status_hls_rtl [file join $flow_dir build hls ethernet_status_hls_p
 set endpoint_hls_rtl [file join $flow_dir build hls ethernet_l2_endpoint_hls_project solution1 syn verilog ethernet_l2_endpoint_hls.v]
 foreach hls_rtl [list $ethernet_status_hls_rtl $endpoint_hls_rtl] {
     if {![file exists $hls_rtl]} {
-        error "HLS RTL not found: $hls_rtl. Run make hls first."
+        error "HLS RTL not found: $hls_rtl. Run python3 build.py hls first."
     }
 }
 

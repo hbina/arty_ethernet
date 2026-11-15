@@ -30,85 +30,97 @@ Generated outputs are written under `build/`, `hls_ethernet/build/`, `.Xil/`, an
 
 ## Toolchain
 
-Set `XILINX_ROOT` to your Xilinx/Vivado/Vitis 2025.2 installation directory. The Makefile uses it to locate Vivado, Vitis HLS, `hw_server`, XSCT, and related tools.
+Set `XILINX_ROOT` to your Xilinx/Vivado/Vitis 2025.2 installation directory. The Python CLI uses it to locate Vivado, Vitis HLS, `hw_server`, XSCT, and related tools.
 
 For example:
 
 ```sh
-make hls XILINX_ROOT=/opt/Xilinx/2025.2
+python3 build.py hls --xilinx-root /opt/Xilinx/2025.2
 ```
 
 Important defaults:
 
 ```text
-PART=xc7a100ticsg324-1L
-HW_PORT=3124
-IFACE=eno1
-BITFILE=hls_ethernet/build/hls_ethernet.bit
+--part xc7a100ticsg324-1L
+--hw-port 3124
+--iface eno1
+--bitfile hls_ethernet/build/hls_ethernet.bit
 ```
 
-Override these on the command line when needed, for example:
+Use Python 3 and pass options after the subcommand. Run `python3 build.py --help` or
+`python3 build.py build --help` for details. Override defaults when needed, for example:
 
 ```sh
-make hls-bit PART=xc7a35ticsg324-1L
-make test-hw IFACE=enp3s0
-make program-vivado HW_PORT=3125
+python3 build.py build --part xc7a35ticsg324-1L
+python3 build.py test --hardware --iface enp3s0
+python3 build.py program --hw-port 3125
 ```
 
-## Make Commands
+## Python CLI
 
 ### Main HLS Flow
 
 ```sh
-make hls
+python3 build.py build --dry-run
+python3 build.py build --skip-hls
+```
+
+`--dry-run` previews any command without executing it. `--skip-hls` reuses the
+existing generated HLS RTL. Invoke the script by its path from any directory; relative paths
+passed as options are resolved from your current directory. Builds do not program
+the board. Board programming requires the explicit `program` command or
+`test --hardware --program`.
+
+```sh
+python3 build.py hls
 ```
 
 Runs Vitis HLS C simulation and C synthesis for the HLS blocks using `hls_ethernet/scripts/run_hls.tcl`. Generated HLS RTL and IP output are placed under `hls_ethernet/build/hls/`.
 
 ```sh
-make hls-bit
+python3 build.py build
 ```
 
-Runs `make hls`, then runs Vivado implementation through `hls_ethernet/scripts/build_hls_bitstream.tcl`. The main output bitstream is:
+Runs `python3 build.py hls`, then runs Vivado implementation through `hls_ethernet/scripts/build_hls_bitstream.tcl`. The main output bitstream is:
 
 ```text
 hls_ethernet/build/hls_ethernet.bit
 ```
 
 ```sh
-make hls-program
+python3 build.py program --method xsct
 ```
 
-Programs `hls_ethernet/build/hls_ethernet.bit` through the older XSCT programming script. Prefer `make program-vivado` for this board because it verifies the target more clearly.
+Programs `hls_ethernet/build/hls_ethernet.bit` through the older XSCT programming script. Prefer `python3 build.py program` for this board because it verifies the target more clearly.
 
 ### Board Discovery And Programming
 
 ```sh
-make hw-server HW_PORT=3124
+python3 build.py hw-server --hw-port 3124
 ```
 
-Starts Xilinx `hw_server`. Run this in its own terminal when probing or programming manually. Use a different `HW_PORT` if the port is already busy.
+Starts Xilinx `hw_server`. Run this in its own terminal when probing or programming manually. Use a different `--hw-port` if the port is already busy.
 
 ```sh
-make probe-board HW_PORT=3124
+python3 build.py probe --hw-port 3124
 ```
 
 Uses Vivado Hardware Manager to inspect the JTAG chain. For the verified board, expect an `xc7a100t` target such as `xc7a100t_0`.
 
 ```sh
-make program-vivado HW_PORT=3124
+python3 build.py program --hw-port 3124
 ```
 
-Programs `$(BITFILE)` with `scripts/program_vivado_hw.tcl`. This is the preferred programming path for the Arty A7-100T because the script checks for an `xc7a100t` target before programming.
+Programs the selected bitstream with `scripts/program_vivado_hw.tcl`. This is the preferred programming path for the Arty A7-100T because the script checks for an `xc7a100t` target before programming.
 
 ```sh
-make list-targets HW_PORT=3124
+python3 build.py list-targets --hw-port 3124
 ```
 
 Lists hardware targets through the XSCT helper script.
 
 ```sh
-make program HW_PORT=3124
+python3 build.py program --method xsct --bitfile build/status_led.bit --hw-port 3124
 ```
 
 Programs the older RTL-only bitstream `build/status_led.bit` through XSCT.
@@ -116,13 +128,21 @@ Programs the older RTL-only bitstream `build/status_led.bit` through XSCT.
 ### Testing
 
 ```sh
-make test-hw IFACE=eno1 HW_PORT=3124
+python3 build.py test
+```
+
+Runs the board-independent CLI and Ethernet helper tests. Install `pytest` in the
+Python environment first. The CLI itself uses only the Python standard library.
+Formatting commands additionally require `clang-format` on `PATH`.
+
+```sh
+python3 build.py test --hardware --iface eno1 --hw-port 3124
 ```
 
 Runs the hardware pytest suite in `tests/hw/` against an already-programmed board. Raw Ethernet tests generally require `sudo` or `CAP_NET_RAW`.
 
 ```sh
-sudo make install-test-board IFACE=eno1 HW_PORT=3124
+sudo python3 build.py test --hardware --program --iface eno1 --hw-port 3124
 ```
 
 Builds the HLS bitstream, programs the board, then runs the hardware pytest suite. Use this for end-to-end board verification after meaningful design changes.
@@ -149,19 +169,19 @@ support, which this hardware endpoint does not implement.
 ### Formatting And Hooks
 
 ```sh
-make check-format
+python3 build.py format --check
 ```
 
 Runs `clang-format --dry-run --Werror` over HLS C++ and header files.
 
 ```sh
-make format
+python3 build.py format
 ```
 
 Applies `clang-format` to HLS C++ and header files.
 
 ```sh
-make install-hooks
+python3 build.py install-hooks
 ```
 
 Installs the repository pre-commit hook by symlinking `scripts/pre-commit.sh` into `.git/hooks/pre-commit`.
@@ -169,21 +189,21 @@ Installs the repository pre-commit hook by symlinking `scripts/pre-commit.sh` in
 ### Legacy RTL Flow
 
 ```sh
-make bit
+python3 build.py build --design rtl
 ```
 
-Builds the older handwritten RTL status LED example from `rtl/status_led.v` with `scripts/build_bitstream.tcl`. This is kept as a reference path; the main project flow is `make hls-bit`.
+Builds the older handwritten RTL status LED example from `rtl/status_led.v` with `scripts/build_bitstream.tcl`. This is kept as a reference path; the main project flow is `python3 build.py build`.
 
 ### Miscellaneous
 
 ```sh
-make vpp-version
+python3 build.py vpp-version
 ```
 
 Prints the installed `v++` version. The main project does not use `v++`.
 
 ```sh
-make clean
+python3 build.py clean
 ```
 
 Removes generated build output and Vivado logs:
