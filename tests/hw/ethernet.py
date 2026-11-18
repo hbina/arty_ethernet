@@ -144,30 +144,123 @@ def is_arp_reply_to(parsed, dst_mac, dst_ip):
     )
 
 
-def is_beacon_payload(payload):
+BEACON_KEYS = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
+# Appended by the bitlogic design; the HLS design sends BEACON_KEYS only.
+BEACON_EXTENDED_KEYS = BEACON_KEYS + ("FCS", "ICMP")
+
+
+def beacon_fields(payload):
+    """Return the beacon's key/value fields, or None if it is not a beacon."""
     if not payload.startswith(ARTY_BEACON_PREFIX):
-        return False
+        return None
     fields = payload.decode("ascii", errors="ignore").split()
-    expected_keys = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
-    if len(fields) != len(expected_keys) or fields[0] != "ARTY":
-        return False
+    if not fields or fields[0] != "ARTY":
+        return None
 
     values = {}
     for field in fields[1:]:
         if "=" not in field:
-            return False
+            return None
         key, value = field.split("=", 1)
         values[key] = value
 
-    if tuple(["ARTY"] + list(values.keys())) != expected_keys:
-        return False
+    if tuple(["ARTY"] + list(values.keys())) not in (BEACON_KEYS, BEACON_EXTENDED_KEYS):
+        return None
     if values["IP"] != "192.168.001.100" or values["MAC"] != "020000000001":
-        return False
+        return None
 
-    hex_keys = ("RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
-    return all(
+    hex_keys = [key for key in values if key not in ("IP", "MAC")]
+    if not all(
         len(values[key]) == 8 and all(byte in b"0123456789ABCDEF" for byte in values[key].encode("ascii"))
         for key in hex_keys
+    ):
+        return None
+    return values
+
+
+def is_beacon_payload(payload):
+    return beacon_fields(payload) is not None
+
+
+def internet_checksum(data):
+    """RFC 1071 checksum of big-endian 16-bit words (odd byte zero-padded)."""
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    while total > 0xFFFF:
+        total = (total & 0xFFFF) + (total >> 16)
+    return ~total & 0xFFFF
+
+
+def build_ipv4_icmp(src_ip, dst_ip, icmp_type, ident, seq, data, ttl=64, packet_id=0x1234):
+    icmp = struct.pack("!BBHHH", icmp_type, 0, 0, ident, seq) + data
+    icmp = icmp[:2] + struct.pack("!H", internet_checksum(icmp)) + icmp[4:]
+    header = struct.pack(
+        "!BBHHHBBH4s4s",
+        0x45,
+        0,
+        20 + len(icmp),
+        packet_id,
+        0x4000,
+        ttl,
+        1,
+        0,
+        socket.inet_aton(src_ip),
+        socket.inet_aton(dst_ip),
+    )
+    header = header[:10] + struct.pack("!H", internet_checksum(header)) + header[12:]
+    return header + icmp
+
+
+def build_icmp_echo_request(src_mac, src_ip, ident, seq, data, dst_ip=FPGA_IP):
+    packet = build_ipv4_icmp(src_ip, dst_ip, 8, ident, seq, data)
+    return build_frame(FPGA_MAC, src_mac, packet, IPV4_ETHERTYPE)
+
+
+def parse_icmp_echo(frame):
+    """Decode an IPv4 ICMP echo frame from raw bytes, checking both checksums.
+
+    Returns None for anything else. Uses the IPv4 total length, so Ethernet
+    padding is ignored."""
+    if len(frame) < 14 + 28 or struct.unpack("!H", frame[12:14])[0] != IPV4_ETHERTYPE:
+        return None
+    ip = frame[14:]
+    if ip[0] != 0x45 or ip[9] != 1:
+        return None
+    total = struct.unpack("!H", ip[2:4])[0]
+    if total < 28 or total > len(ip) or internet_checksum(ip[:20]) != 0:
+        return None
+    icmp = ip[20:total]
+    if internet_checksum(icmp) != 0:
+        return None
+    icmp_type, code, _, ident, seq = struct.unpack("!BBHHH", icmp[:8])
+    return {
+        "dst_mac": frame[0:6],
+        "src_mac": frame[6:12],
+        "ttl": ip[8],
+        "src_ip": socket.inet_ntoa(ip[12:16]),
+        "dst_ip": socket.inet_ntoa(ip[16:20]),
+        "type": icmp_type,
+        "code": code,
+        "ident": ident,
+        "seq": seq,
+        "data": icmp[8:],
+    }
+
+
+def is_icmp_echo_reply_to(parsed, dst_mac, dst_ip, ident, seq, data):
+    echo = parse_icmp_echo(parsed.raw)
+    return (
+        echo is not None
+        and echo["src_mac"] == FPGA_MAC
+        and echo["dst_mac"] == dst_mac
+        and echo["src_ip"] == FPGA_IP
+        and echo["dst_ip"] == dst_ip
+        and echo["type"] == 0
+        and echo["code"] == 0
+        and echo["ident"] == ident
+        and echo["seq"] == seq
+        and echo["data"] == data
     )
 
 

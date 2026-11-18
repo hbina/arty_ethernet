@@ -66,3 +66,41 @@ def test_is_arp_reply_to_matches_expected_reply():
     parsed = parse_frame(build_frame(host, FPGA_MAC, arp_payload, ARP_ETHERTYPE))
 
     assert is_arp_reply_to(parsed, host, "192.168.1.10")
+
+
+def test_internet_checksum_rfc1071_example():
+    from .ethernet import internet_checksum
+
+    # RFC 1071 section 3 example words sum to 0xDDF2.
+    assert internet_checksum(bytes.fromhex("0001f203f4f5f6f7")) == (~0xDDF2 & 0xFFFF)
+    assert internet_checksum(bytes.fromhex("0001f203f4f5f6f7") + b"\x22\x0d") == 0
+
+
+def test_icmp_echo_request_round_trips():
+    from .ethernet import build_icmp_echo_request, parse_icmp_echo
+
+    src = parse_mac("0a:0b:0c:0d:0e:0f")
+    frame = build_icmp_echo_request(src, "192.168.1.10", 0x1234, 7, b"abc")
+    echo = parse_icmp_echo(frame)
+    assert len(frame) == 14 + MIN_ETH_PAYLOAD
+    assert echo["dst_mac"] == FPGA_MAC and echo["src_mac"] == src
+    assert echo["src_ip"] == "192.168.1.10" and echo["dst_ip"] == FPGA_IP
+    assert (echo["type"], echo["code"], echo["ident"], echo["seq"]) == (8, 0, 0x1234, 7)
+    assert echo["data"] == b"abc"
+    corrupted = bytearray(frame)
+    corrupted[-30] ^= 1
+    assert parse_icmp_echo(bytes(corrupted)) is None
+
+
+def test_beacon_accepts_hls_and_extended_formats():
+    from .ethernet import beacon_fields, is_beacon_payload
+
+    base = (
+        b"ARTY IP=192.168.001.100 MAC=020000000001 RX=00000001 RXQ=00000000 RXP=00000000 "
+        b"TXD=00000000 ARP=00000001 UDP=00000000 UP=00000002"
+    )
+    assert is_beacon_payload(base)
+    extended = base + b" FCS=00000003 ICMP=00000004"
+    assert beacon_fields(extended)["ICMP"] == "00000004"
+    assert "ICMP" not in beacon_fields(base)
+    assert not is_beacon_payload(base + b" FCS=00000003")
