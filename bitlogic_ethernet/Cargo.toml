@@ -1,0 +1,9 @@
+[package]
+name = "bitlogic_ethernet"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Arty A7 Layer-2 Ethernet endpoint written as bitlogic next-state functions"
+
+[dependencies]
+bitlogic = { path = "../../bitlogic/crates/bitlogic" }

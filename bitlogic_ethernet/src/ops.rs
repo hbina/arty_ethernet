@@ -1,0 +1,135 @@
+//! Small `#[logic]` helpers shared by the units. Each call is inlined into the
+//! caller's graph, so a helper used twice is two copies of its logic.
+use bitlogic::{Bits, bits, logic};
+
+/// Uppercase ASCII hex digit for a nibble.
+#[logic]
+pub fn hex_digit(n: Bits<4>) -> Bits<8> {
+    let wide = bits::<4>(0).concat::<4, 8>(n);
+    if n < bits::<4>(10) {
+        wide + bits::<8>(0x30)
+    } else {
+        wide + bits::<8>(0x37)
+    }
+}
+
+/// Byte `position` of a 48-bit word, most significant byte first (0..=5).
+#[logic]
+pub fn byte_of48(word: Bits<48>, position: Bits<4>) -> Bits<8> {
+    if position == bits::<4>(0) {
+        word.slice::<8>(40)
+    } else if position == bits::<4>(1) {
+        word.slice::<8>(32)
+    } else if position == bits::<4>(2) {
+        word.slice::<8>(24)
+    } else if position == bits::<4>(3) {
+        word.slice::<8>(16)
+    } else if position == bits::<4>(4) {
+        word.slice::<8>(8)
+    } else {
+        word.slice::<8>(0)
+    }
+}
+
+/// Nibble `position` of a 32-bit word, most significant nibble first (0..=7).
+#[logic]
+pub fn nibble_of32(word: Bits<32>, position: Bits<4>) -> Bits<4> {
+    if position == bits::<4>(0) {
+        word.slice::<4>(28)
+    } else if position == bits::<4>(1) {
+        word.slice::<4>(24)
+    } else if position == bits::<4>(2) {
+        word.slice::<4>(20)
+    } else if position == bits::<4>(3) {
+        word.slice::<4>(16)
+    } else if position == bits::<4>(4) {
+        word.slice::<4>(12)
+    } else if position == bits::<4>(5) {
+        word.slice::<4>(8)
+    } else if position == bits::<4>(6) {
+        word.slice::<4>(4)
+    } else {
+        word.slice::<4>(0)
+    }
+}
+
+/// Byte `index` of a 32-bit word, least significant byte first.
+#[logic]
+pub fn byte_of32_le(word: Bits<32>, index: Bits<2>) -> Bits<8> {
+    if index == bits::<2>(0) {
+        word.slice::<8>(0)
+    } else if index == bits::<2>(1) {
+        word.slice::<8>(8)
+    } else if index == bits::<2>(2) {
+        word.slice::<8>(16)
+    } else {
+        word.slice::<8>(24)
+    }
+}
+
+/// Shift `byte` into the low end of a big-endian field when `enable` is set.
+#[logic]
+pub fn shift_in16(field: Bits<16>, byte: Bits<8>, enable: bool) -> Bits<16> {
+    if enable {
+        field.slice::<8>(0).concat::<8, 16>(byte)
+    } else {
+        field
+    }
+}
+
+#[logic]
+pub fn shift_in32(field: Bits<32>, byte: Bits<8>, enable: bool) -> Bits<32> {
+    if enable {
+        field.slice::<24>(0).concat::<8, 32>(byte)
+    } else {
+        field
+    }
+}
+
+#[logic]
+pub fn shift_in48(field: Bits<48>, byte: Bits<8>, enable: bool) -> Bits<48> {
+    if enable {
+        field.slice::<40>(0).concat::<8, 48>(byte)
+    } else {
+        field
+    }
+}
+
+/// `lo <= i < hi`.
+#[logic]
+pub fn within(i: Bits<11>, lo: Bits<11>, hi: Bits<11>) -> bool {
+    i >= lo && i < hi
+}
+
+/// Increment a 32-bit counter when `enable` is set (wrapping).
+#[logic]
+pub fn bump32(counter: Bits<32>, enable: bool) -> Bits<32> {
+    if enable {
+        counter + bits::<32>(1)
+    } else {
+        counter
+    }
+}
+
+/// One bit of the reflected CRC-32 (polynomial 0xEDB88320).
+#[logic]
+pub fn crc32_bit(crc: Bits<32>, bit: bool) -> Bits<32> {
+    if crc.bit(0) ^ bit {
+        (crc >> 1) ^ bits::<32>(0xEDB8_8320)
+    } else {
+        crc >> 1
+    }
+}
+
+/// One byte of the reflected CRC-32, least significant bit first.
+#[logic]
+pub fn crc32_byte(crc: Bits<32>, data: Bits<8>) -> Bits<32> {
+    let c = crc32_bit(crc, data.bit(0));
+    let c = crc32_bit(c, data.bit(1));
+    let c = crc32_bit(c, data.bit(2));
+    let c = crc32_bit(c, data.bit(3));
+    let c = crc32_bit(c, data.bit(4));
+    let c = crc32_bit(c, data.bit(5));
+    let c = crc32_bit(c, data.bit(6));
+    crc32_bit(c, data.bit(7))
+}
