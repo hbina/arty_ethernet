@@ -7,7 +7,13 @@
 // Clock domains:
 //   CLK100MHZ  (100 MHz board oscillator): PLL, LED status unit.
 //   eth_rx_clk (25 MHz from the PHY at 100 Mb/s): the whole Ethernet core.
-module arty_top (
+//
+// The parameters default to the board values; simulation shortens them.
+module arty_top #(
+    parameter [31:0] BEACON_INTERVAL = 32'd25000000,   // eth_rx_clk cycles (1 s)
+    parameter [31:0] GARP_INTERVAL   = 32'd125000000,  // eth_rx_clk cycles (5 s)
+    parameter [24:0] LED_HOLDOFF     = 25'd12500000    // CLK100MHZ cycles (125 ms)
+) (
     input  wire       CLK100MHZ,
     output wire       eth_ref_clk,
     output wire       eth_rstn,
@@ -88,7 +94,10 @@ module arty_top (
     wire rx_active_eth;
     wire tx_active_eth;
 
-    eth_core eth_core_i (
+    eth_core #(
+        .BEACON_INTERVAL(BEACON_INTERVAL),
+        .GARP_INTERVAL(GARP_INTERVAL)
+    ) eth_core_i (
         .clk(eth_rx_clk),
         .rst(eth_rst),
         .eth_rx_dv(eth_rx_dv),
@@ -120,7 +129,7 @@ module arty_top (
         .rst(1'b0),
         .i_frame_event(frame_event_sys),
         .i_rx_active(activity_sync[1]),
-        .i_holdoff_cycles(25'd12500000),
+        .i_holdoff_cycles(LED_HOLDOFF),
         .o_led(led),
         .s_frame_count(),
         .s_holdoff()
