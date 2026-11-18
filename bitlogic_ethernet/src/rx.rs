@@ -5,9 +5,17 @@
 //! `{slot, offset}`. Bytes pass through a four-byte delay so the trailing FCS is
 //! never stored. On frame end a valid frame publishes `{truncated, body_len}`
 //! into the slot's metadata entry and advances `wr_ptr`. The consumer owns
-//! `rd_ptr`; the ring is full when `wr_ptr - rd_ptr == 8`. As in the HLS design,
-//! CRC is not checked on receive.
+//! `rd_ptr`; the ring is full when `wr_ptr - rd_ptr == 8`.
+//!
+//! The CRC-32 runs over every data byte including the FCS. A frame is intact
+//! when the register ends at the CRC-32 residue `0xDEBB20E3`; frames that fail
+//! are not published and are counted in `fcs_errors`. (The HLS design does
+//! not check the FCS.)
+use crate::ops::crc32_byte;
 use bitlogic::{Bits, LogicValue, bits, logic};
+
+/// Reflected CRC-32 register value after a correct FCS has been processed.
+pub const CRC32_RESIDUE: u64 = 0xDEBB_20E3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
 pub struct MiiRx {
@@ -34,9 +42,14 @@ pub struct RxState {
     pub truncated: bool,
     /// The ring was full at frame start; nothing from this frame is stored.
     pub dropping: bool,
+    /// Running reflected CRC-32 over data bytes, FCS included.
+    pub crc: Bits<32>,
     // Producer side of the RX ring.
     pub wr_ptr: Bits<4>,
+    /// Frames dropped because the ring was full.
     pub drop_count: Bits<32>,
+    /// Frames dropped because the FCS did not match.
+    pub fcs_errors: Bits<32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
@@ -87,6 +100,11 @@ pub fn rx_step(input: RxIn) -> RxOut {
     let tail_count = if start { bits::<3>(0) } else { s.tail_count };
     let body_count = if start { bits::<11>(0) } else { s.body_count };
     let truncated = s.truncated && !start;
+    let crc = if start {
+        bits::<32>(0xffff_ffff)
+    } else {
+        s.crc
+    };
 
     // Preamble/SFD search. Any non-0x55 byte leaves the search; the SFD after
     // at least one preamble byte is consumed, anything else is frame data.
@@ -105,7 +123,9 @@ pub fn rx_step(input: RxIn) -> RxOut {
 
     let next_error = error;
     let frame_ok = byte_index >= bits::<16>(18) && tail_full && !next_error;
-    let publish = end && !dropping && frame_ok;
+    let fcs_ok = crc == bits::<32>(0xDEBB_20E3);
+    let publish = end && !dropping && frame_ok && fcs_ok;
+    let fcs_error = end && !dropping && frame_ok && !fcs_ok;
     let truncated_bit = if truncated {
         bits::<1>(1)
     } else {
@@ -144,12 +164,18 @@ pub fn rx_step(input: RxIn) -> RxOut {
             },
             truncated: (truncated || (emit && !can_store)) && !end,
             dropping: dropping && !end,
+            crc: if process { crc32_byte(crc, byte) } else { crc },
             wr_ptr: if publish {
                 s.wr_ptr + bits::<4>(1)
             } else {
                 s.wr_ptr
             },
             drop_count,
+            fcs_errors: if fcs_error {
+                s.fcs_errors + bits::<32>(1)
+            } else {
+                s.fcs_errors
+            },
         },
         ram_we: store && !dropping,
         ram_waddr: s.wr_ptr.slice::<3>(0).concat::<11, 14>(body_count),

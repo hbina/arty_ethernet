@@ -7,15 +7,7 @@ mod common;
 use bitlogic_ethernet::hdl::generated_files;
 use bitlogic_ethernet::sim::{CoreConfig, EthCore, Native, RxNibble, TxNibble};
 use common::*;
-use std::{fmt::Write, fs, path::PathBuf, process::Command};
-
-fn xilinx_bin() -> Option<PathBuf> {
-    let root = std::env::var_os("XILINX_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Xilinx/2025.2")))?;
-    let bin = root.join("Vivado/bin");
-    bin.join("xvlog").is_file().then_some(bin)
-}
+use std::{fs, path::PathBuf};
 
 fn testbench(cycles: usize, config: CoreConfig) -> String {
     format!(
@@ -65,8 +57,7 @@ fn generated_verilog_matches_cycle_model() {
         eprintln!("SKIPPED: BITLOGIC_ETHERNET_SKIP_HDL is set");
         return;
     }
-    let bin = xilinx_bin()
-        .expect("Vivado xsim not found; set XILINX_ROOT or BITLOGIC_ETHERNET_SKIP_HDL=1");
+    let bin = xilinx_bin();
 
     let config = CoreConfig {
         beacon_interval: 6_000,
@@ -91,7 +82,15 @@ fn generated_verilog_matches_cycle_model() {
         &ethernet(FPGA_MAC, HOST_MAC, 0x0800, &[5; 1600]),
         24,
     ));
-    stim.resize(20_000, RxNibble::default());
+    // ICMP echo: odd payload, a large one, and one with a corrupted FCS.
+    stim.extend(mii_frame(&Echo::request(1, 1, vec![0xa5; 37]).frame(), 24));
+    stim.extend(mii_frame(&Echo::request(1, 2, vec![0x3c; 900]).frame(), 24));
+    stim.extend(mii_frame_bad_fcs(
+        &Echo::request(1, 3, vec![1; 20]).frame(),
+        24,
+        0x10,
+    ));
+    stim.resize(24_000, RxNibble::default());
 
     let expected: Vec<TxNibble> = run(&mut EthCore::new(Native, config), &stim);
     let frames = decode(&expected);
@@ -116,26 +115,9 @@ fn generated_verilog_matches_cycle_model() {
     }
     fs::write(dir.join("tb.v"), testbench(stim.len(), config)).unwrap();
     sources.push("tb.v".into());
-    let mut hex = String::new();
-    for s in &stim {
-        let value = u8::from(s.rxerr) << 5 | u8::from(s.dv) << 4 | s.rxd;
-        writeln!(hex, "{value:02x}").unwrap();
-    }
-    fs::write(dir.join("stim.hex"), hex).unwrap();
+    fs::write(dir.join("stim.hex"), stim_hex(&stim)).unwrap();
 
-    let step = |tool: &str, args: &[&str]| {
-        let output = Command::new(bin.join(tool))
-            .args(args)
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{tool} failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
+    let step = |tool: &str, args: &[&str]| run_tool(&bin, &dir, tool, args);
     let mut xvlog = vec!["--nolog"];
     xvlog.extend(sources.iter().map(String::as_str));
     step("xvlog", &xvlog);
@@ -145,14 +127,7 @@ fn generated_verilog_matches_cycle_model() {
     );
     step("xsim", &["--nolog", "tb_sim", "-R"]);
 
-    let actual: Vec<TxNibble> = fs::read_to_string(dir.join("out.txt"))
-        .unwrap()
-        .lines()
-        .map(|line| TxNibble {
-            en: &line[..1] == "1",
-            txd: u8::from_str_radix(&line[1..], 16).expect("defined txd"),
-        })
-        .collect();
+    let actual = parse_tx(&fs::read_to_string(dir.join("out.txt")).unwrap());
     assert_eq!(actual.len(), expected.len());
     if let Some(k) = (0..expected.len()).find(|&k| actual[k] != expected[k]) {
         panic!(

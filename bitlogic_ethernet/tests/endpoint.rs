@@ -149,20 +149,26 @@ fn gratuitous_arp_is_broadcast_with_own_ip() {
 }
 
 #[test]
-fn simultaneous_ticks_prefer_gratuitous_arp() {
-    // HLS semantics: the beacon tick that coincides with the ARP tick is lost.
+fn simultaneous_ticks_send_gratuitous_arp_then_beacon() {
+    // Ticks stay pending until served: the gratuitous ARP goes first and the
+    // coinciding beacon follows it. (The HLS design drops the beacon.)
     let config = CoreConfig {
         beacon_interval: 3_000,
         garp_interval: 3_000,
         ..CoreConfig::default()
     };
     let mut core = EthCore::new(Native, config);
-    let frames = decode(&run(&mut core, &idle(9_200)));
+    let frames = decode(&run(&mut core, &idle(9_800)));
     let announce = arp_reply(BROADCAST, BROADCAST, FPGA_IP);
-    assert_eq!(
-        bodies(&frames),
-        vec![announce.clone(), announce.clone(), announce]
-    );
+    let mut expected = Vec::new();
+    for up in 0..3 {
+        expected.push(announce.clone());
+        expected.push(beacon(Counts {
+            up,
+            ..Counts::default()
+        }));
+    }
+    assert_eq!(bodies(&frames), expected);
 }
 
 #[test]
@@ -235,12 +241,18 @@ fn interpreted_ir_matches_native_cycle_for_cycle() {
         24,
     ));
     stim.extend(mii_frame(&arp_request(HOST_MAC, HOST_IP, FPGA_IP), 24));
-    stim.resize(5_500, RxNibble::default());
+    let ping = Echo::request(1, 2, vec![0x11; 33]);
+    stim.extend(mii_frame(&ping.frame(), 24));
+    stim.extend(mii_frame_bad_fcs(&ping.frame(), 24, 0x8000));
+    stim.resize(6_000, RxNibble::default());
     let native = run(&mut EthCore::new(Native, config), &stim);
     let interpreted = run(
         &mut EthCore::new(Interpreted::new().unwrap(), config),
         &stim,
     );
     assert_eq!(native, interpreted);
-    assert_eq!(decode(&native).len(), 5);
+    // Two ARP replies, the echo reply, beacon, gratuitous ARP, beacon.
+    let frames = decode(&native);
+    assert_eq!(frames.len(), 6);
+    assert_eq!(frames[2].body, ping.reply().frame());
 }

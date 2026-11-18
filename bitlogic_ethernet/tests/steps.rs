@@ -139,3 +139,51 @@ fn helpers_match_independent_definitions() {
         assert_eq!((!crc).get() as u32, common::crc32(&message));
     }
 }
+
+#[test]
+fn checksum_helpers_match_rfc_definitions() {
+    use bitlogic_ethernet::ops;
+    let mut rng = Rng(11);
+    for _ in 0..20_000 {
+        let a = rng.next() as u16;
+        let b = rng.next() as u16;
+        // Ones'-complement addition: 32-bit sum with end-around carry.
+        let s = u32::from(a) + u32::from(b);
+        let want = ((s & 0xffff) + (s >> 16)) as u16;
+        assert_eq!(
+            ops::ones_add(bits(a.into()), bits(b.into())).get(),
+            u64::from(want)
+        );
+    }
+    // Incremental update (RFC 1624) agrees with recomputing the checksum
+    // from scratch after changing one word.
+    for _ in 0..2_000 {
+        let len = 2 + 2 * (rng.next() % 30) as usize;
+        let mut data: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
+        let at = 2 * (rng.next() as usize % (len / 2));
+        let old = u16::from_be_bytes([data[at], data[at + 1]]);
+        let new = rng.next() as u16;
+        let before = common::internet_checksum(&data);
+        data[at..at + 2].copy_from_slice(&new.to_be_bytes());
+        let after = common::internet_checksum(&data);
+        let updated = ops::checksum_update(bits(before.into()), bits(old.into()), bits(new.into()));
+        // Both represent the same ones'-complement value (0x0000 == 0xFFFF).
+        let norm = |x: u64| if x == 0xffff { 0 } else { x };
+        assert_eq!(norm(updated.get()), norm(after.into()), "{data:?} at {at}");
+    }
+}
+
+#[test]
+fn rx_crc_residue_matches_independent_crc() {
+    use bitlogic_ethernet::{ops, rx::CRC32_RESIDUE};
+    let mut rng = Rng(12);
+    for _ in 0..500 {
+        let len = (rng.next() % 200) as usize;
+        let mut wire: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
+        wire.extend(common::crc32(&wire).to_le_bytes());
+        let reg = wire.iter().fold(bits::<32>(0xffff_ffff), |c, &b| {
+            ops::crc32_byte(c, bits(b.into()))
+        });
+        assert_eq!(reg.get(), CRC32_RESIDUE);
+    }
+}

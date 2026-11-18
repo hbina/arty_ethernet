@@ -164,6 +164,7 @@ impl<S: Steps> EthCore<S> {
             config: self.config,
             rx_wr_ptr: self.rx.wr_ptr,
             rx_queue_drops: self.rx.drop_count,
+            rx_fcs_errors: self.rx.fcs_errors,
             rx_rdata: bits(self.rx_rdata.into()),
             rx_meta: bits(self.rx_meta_rdata.into()),
             rom_rdata: bits(self.rom_rdata.into()),

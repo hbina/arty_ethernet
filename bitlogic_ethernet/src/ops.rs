@@ -133,3 +133,52 @@ pub fn crc32_byte(crc: Bits<32>, data: Bits<8>) -> Bits<32> {
     let c = crc32_bit(c, data.bit(6));
     crc32_bit(c, data.bit(7))
 }
+
+/// Byte `position` of a 32-bit word, most significant byte first (0..=3).
+#[logic]
+pub fn byte_of32(word: Bits<32>, position: Bits<2>) -> Bits<8> {
+    if position == bits::<2>(0) {
+        word.slice::<8>(24)
+    } else if position == bits::<2>(1) {
+        word.slice::<8>(16)
+    } else if position == bits::<2>(2) {
+        word.slice::<8>(8)
+    } else {
+        word.slice::<8>(0)
+    }
+}
+
+/// Ones'-complement 16-bit addition (end-around carry), as used by the
+/// Internet checksum.
+#[logic]
+pub fn ones_add(a: Bits<16>, b: Bits<16>) -> Bits<16> {
+    let sum = bits::<1>(0).concat::<16, 17>(a) + bits::<1>(0).concat::<16, 17>(b);
+    let carry = if sum.bit(16) {
+        bits::<16>(1)
+    } else {
+        bits::<16>(0)
+    };
+    sum.slice::<16>(0) + carry
+}
+
+/// Fold a 32-bit accumulator of 16-bit words into a ones'-complement sum.
+/// The accumulator itself must not wrap; a frame adds at most 757 words.
+#[logic]
+pub fn fold16(acc: Bits<32>) -> Bits<16> {
+    ones_add(acc.slice::<16>(0), acc.slice::<16>(16))
+}
+
+/// The byte at frame offset `index` as its contribution to a 16-bit word sum:
+/// even offsets are high bytes, odd offsets low bytes.
+#[logic]
+pub fn word_part(byte: Bits<8>, index: Bits<11>) -> Bits<32> {
+    let wide = bits::<24>(0).concat::<8, 32>(byte);
+    if index.bit(0) { wide } else { wide << 8 }
+}
+
+/// RFC 1624 incremental checksum update: replacing 16-bit field `old` with
+/// `new` changes checksum `hc` to `~(~hc + ~old + new)`.
+#[logic]
+pub fn checksum_update(hc: Bits<16>, old: Bits<16>, new: Bits<16>) -> Bits<16> {
+    !ones_add(ones_add(!hc, !old), new)
+}

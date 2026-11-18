@@ -47,6 +47,7 @@ module eth_core #(
     // Cross-unit registered state.
     wire [3:0]  rx_wr_ptr;
     wire [31:0] rx_drop_count;
+    wire [31:0] rx_fcs_errors;
     wire [3:0]  rx_rd_ptr;
     wire [2:0]  tx_wr_ptr;
     wire [2:0]  tx_rd_ptr;
@@ -72,7 +73,8 @@ module eth_core #(
         .i_rd_ptr(rx_rd_ptr),
         .o_ram_we(rx_we), .o_ram_waddr(rx_waddr), .o_ram_wdata(rx_wdata),
         .o_meta_we(rx_meta_we), .o_meta_waddr(rx_meta_waddr), .o_meta_wdata(rx_meta_wdata),
-        .s_wr_ptr(rx_wr_ptr), .s_drop_count(rx_drop_count)
+        .s_wr_ptr(rx_wr_ptr), .s_drop_count(rx_drop_count),
+        .s_fcs_errors(rx_fcs_errors)
     );
 
     proto_unit proto (
@@ -81,6 +83,7 @@ module eth_core #(
         .i_config_beacon_interval(BEACON_INTERVAL),
         .i_config_garp_interval(GARP_INTERVAL),
         .i_rx_wr_ptr(rx_wr_ptr), .i_rx_queue_drops(rx_drop_count),
+        .i_rx_fcs_errors(rx_fcs_errors),
         .i_rx_rdata(rx_rdata), .i_rx_meta(rx_meta_rdata),
         .i_rom_rdata(rom_data), .i_tx_rd_ptr(tx_rd_ptr),
         .o_rx_raddr(rx_raddr), .o_rx_meta_raddr(rx_meta_raddr),
