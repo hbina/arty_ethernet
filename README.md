@@ -26,7 +26,22 @@ The primary design lives under `hls_ethernet/`.
 
 The Ethernet endpoint uses MAC `02:00:00:00:00:01`, announces IP `192.168.1.100` with periodic broadcast gratuitous ARP replies, sends periodic broadcast diagnostics beacons on EtherType `0x88B5`, and replies to valid ARP requests for `192.168.1.100`.
 
-Generated outputs are written under `build/`, `hls_ethernet/build/`, `.Xil/`, and Vivado log/journal files. Do not hand-edit generated output; edit source C++/Verilog/Tcl/XDC and rebuild.
+### bitlogic implementation
+
+`bitlogic_ethernet/` reimplements the same endpoint with
+bitlogic pure next-state functions written in Rust. It
+has the same MAC/IP, ARP replies, gratuitous ARP, beacon text and pins. Clocks,
+RAMs and clock-domain crossings are handwritten Verilog. It requires Rust/Cargo
+and the sibling `../bitlogic` checkout. See
+[bitlogic_ethernet/README.md](bitlogic_ethernet/README.md).
+
+```sh
+python3 build.py build --design bitlogic
+python3 build.py program --bitfile bitlogic_ethernet/build/bitlogic_ethernet.bit
+cargo test --release --locked --manifest-path bitlogic_ethernet/Cargo.toml
+```
+
+Generated outputs are written under `build/`, `hls_ethernet/build/`, `bitlogic_ethernet/build/`, `.Xil/`, and Vivado log/journal files. Do not hand-edit generated output; edit source C++/Verilog/Tcl/XDC and rebuild.
 
 ## Toolchain
 
