@@ -8,16 +8,21 @@
 use crate::ops::{byte_of32_le, crc32_byte};
 use bitlogic::{Bits, LogicValue, bits, logic};
 
-pub const PHASE_IDLE: u64 = 0;
-pub const PHASE_LOAD: u64 = 1;
-pub const PHASE_PREAMBLE: u64 = 2;
-pub const PHASE_DATA: u64 = 3;
-pub const PHASE_FCS: u64 = 4;
-pub const PHASE_IFG: u64 = 5;
+/// Framer phase, stored in 3 bits. `Idle` is 0, the reset value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
+pub enum TxPhase {
+    Idle,
+    /// Latch the frame length from the metadata RAM.
+    Load,
+    Preamble,
+    Data,
+    Fcs,
+    Ifg,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
 pub struct TxState {
-    pub phase: Bits<3>,
+    pub phase: TxPhase,
     pub high_nibble: bool,
     pub byte_index: Bits<11>,
     pub fcs_index: Bits<2>,
@@ -53,12 +58,12 @@ pub struct TxOut {
 #[logic]
 pub fn tx_step(input: TxIn) -> TxOut {
     let s = input.state;
-    let idle = s.phase == bits::<3>(0);
-    let load = s.phase == bits::<3>(1);
-    let preamble = s.phase == bits::<3>(2);
-    let data = s.phase == bits::<3>(3);
-    let fcs = s.phase == bits::<3>(4);
-    let ifg = s.phase == bits::<3>(5);
+    let idle = s.phase == TxPhase::Idle;
+    let load = s.phase == TxPhase::Load;
+    let preamble = s.phase == TxPhase::Preamble;
+    let data = s.phase == TxPhase::Data;
+    let fcs = s.phase == TxPhase::Fcs;
+    let ifg = s.phase == TxPhase::Ifg;
     let high = s.high_nibble;
 
     let start = idle && s.rd_ptr != input.wr_ptr;
@@ -101,20 +106,43 @@ pub fn tx_step(input: TxIn) -> TxOut {
     let fcs_done = fcs && byte_done && s.fcs_index == bits::<2>(3);
     let ifg_done = ifg && s.ifg_count == bits::<6>(23);
 
-    let next_phase = if start {
-        bits::<3>(1)
-    } else if load {
-        bits::<3>(2)
-    } else if preamble_done {
-        bits::<3>(3)
-    } else if data_done {
-        bits::<3>(4)
-    } else if fcs_done {
-        bits::<3>(5)
-    } else if ifg_done {
-        bits::<3>(0)
-    } else {
-        s.phase
+    let next_phase = match s.phase {
+        TxPhase::Idle => {
+            if start {
+                TxPhase::Load
+            } else {
+                TxPhase::Idle
+            }
+        }
+        TxPhase::Load => TxPhase::Preamble,
+        TxPhase::Preamble => {
+            if preamble_done {
+                TxPhase::Data
+            } else {
+                TxPhase::Preamble
+            }
+        }
+        TxPhase::Data => {
+            if data_done {
+                TxPhase::Fcs
+            } else {
+                TxPhase::Data
+            }
+        }
+        TxPhase::Fcs => {
+            if fcs_done {
+                TxPhase::Ifg
+            } else {
+                TxPhase::Fcs
+            }
+        }
+        TxPhase::Ifg => {
+            if ifg_done {
+                TxPhase::Idle
+            } else {
+                TxPhase::Ifg
+            }
+        }
     };
     let next_byte_index = if load || preamble_done || data_done {
         bits::<11>(0)

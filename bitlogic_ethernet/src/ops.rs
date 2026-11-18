@@ -13,58 +13,48 @@ pub fn hex_digit(n: Bits<4>) -> Bits<8> {
     }
 }
 
-/// Byte `position` of a 48-bit word, most significant byte first (0..=5).
+/// Byte `position` of a 48-bit word, most significant byte first (0..=5;
+/// later positions read zero).
 #[logic]
 pub fn byte_of48(word: Bits<48>, position: Bits<4>) -> Bits<8> {
-    if position == bits::<4>(0) {
-        word.slice::<8>(40)
-    } else if position == bits::<4>(1) {
-        word.slice::<8>(32)
-    } else if position == bits::<4>(2) {
-        word.slice::<8>(24)
-    } else if position == bits::<4>(3) {
-        word.slice::<8>(16)
-    } else if position == bits::<4>(4) {
-        word.slice::<8>(8)
-    } else {
-        word.slice::<8>(0)
-    }
+    [
+        word.slice::<8>(40),
+        word.slice::<8>(32),
+        word.slice::<8>(24),
+        word.slice::<8>(16),
+        word.slice::<8>(8),
+        word.slice::<8>(0),
+    ]
+    .at(position)
 }
 
-/// Nibble `position` of a 32-bit word, most significant nibble first (0..=7).
+/// Nibble `position` of a 32-bit word, most significant nibble first (0..=7;
+/// later positions read zero).
 #[logic]
 pub fn nibble_of32(word: Bits<32>, position: Bits<4>) -> Bits<4> {
-    if position == bits::<4>(0) {
-        word.slice::<4>(28)
-    } else if position == bits::<4>(1) {
-        word.slice::<4>(24)
-    } else if position == bits::<4>(2) {
-        word.slice::<4>(20)
-    } else if position == bits::<4>(3) {
-        word.slice::<4>(16)
-    } else if position == bits::<4>(4) {
-        word.slice::<4>(12)
-    } else if position == bits::<4>(5) {
-        word.slice::<4>(8)
-    } else if position == bits::<4>(6) {
-        word.slice::<4>(4)
-    } else {
-        word.slice::<4>(0)
-    }
+    [
+        word.slice::<4>(28),
+        word.slice::<4>(24),
+        word.slice::<4>(20),
+        word.slice::<4>(16),
+        word.slice::<4>(12),
+        word.slice::<4>(8),
+        word.slice::<4>(4),
+        word.slice::<4>(0),
+    ]
+    .at(position)
 }
 
 /// Byte `index` of a 32-bit word, least significant byte first.
 #[logic]
 pub fn byte_of32_le(word: Bits<32>, index: Bits<2>) -> Bits<8> {
-    if index == bits::<2>(0) {
-        word.slice::<8>(0)
-    } else if index == bits::<2>(1) {
-        word.slice::<8>(8)
-    } else if index == bits::<2>(2) {
-        word.slice::<8>(16)
-    } else {
-        word.slice::<8>(24)
-    }
+    [
+        word.slice::<8>(0),
+        word.slice::<8>(8),
+        word.slice::<8>(16),
+        word.slice::<8>(24),
+    ]
+    .at(index)
 }
 
 /// Shift `byte` into the low end of a big-endian field when `enable` is set.
@@ -137,15 +127,13 @@ pub fn crc32_byte(crc: Bits<32>, data: Bits<8>) -> Bits<32> {
 /// Byte `position` of a 32-bit word, most significant byte first (0..=3).
 #[logic]
 pub fn byte_of32(word: Bits<32>, position: Bits<2>) -> Bits<8> {
-    if position == bits::<2>(0) {
-        word.slice::<8>(24)
-    } else if position == bits::<2>(1) {
-        word.slice::<8>(16)
-    } else if position == bits::<2>(2) {
-        word.slice::<8>(8)
-    } else {
-        word.slice::<8>(0)
-    }
+    [
+        word.slice::<8>(24),
+        word.slice::<8>(16),
+        word.slice::<8>(8),
+        word.slice::<8>(0),
+    ]
+    .at(position)
 }
 
 /// Ones'-complement 16-bit addition (end-around carry), as used by the

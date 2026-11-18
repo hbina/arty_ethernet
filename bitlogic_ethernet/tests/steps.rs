@@ -3,7 +3,7 @@
 //! status block.
 mod common;
 
-use bitlogic::{Bits, Logic, LogicValue, bits};
+use bitlogic::{Bits, Logic, LogicValue, Schema, bits};
 use bitlogic_ethernet::{proto, rx, status, tx, zero};
 use common::Rng;
 use std::fmt::Debug;
@@ -13,6 +13,10 @@ fn random<T: LogicValue>(rng: &mut Rng) -> T {
         .leaves()
         .iter()
         .map(|(_, leaf)| {
+            // Enum leaves only take their declared encodings.
+            if let Schema::Enum { variants, .. } = leaf {
+                return variants[(rng.next() % variants.len() as u64) as usize].1;
+            }
             let width = leaf.width().unwrap();
             // Bias toward small values so equality guards are exercised.
             let raw = if rng.next().is_multiple_of(4) {
