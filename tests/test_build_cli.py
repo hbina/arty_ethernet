@@ -36,6 +36,20 @@ class BuildCliTests(unittest.TestCase):
         self.assertTrue(run.call_args.args[0][0].endswith("/Vivado/bin/vivado"))
 
     @patch.object(cli.subprocess, "run")
+    def test_bitlogic_build_generates_rtl_before_vivado(self, run):
+        self.assertEqual(cli.main(["build", "--design", "bitlogic"]), 0)
+        self.assertEqual(run.call_count, 2)
+        first, second = run.call_args_list
+        self.assertEqual(first.args[0][0], "cargo")
+        self.assertIn("bitlogic_ethernet/Cargo.toml", first.args[0])
+        self.assertEqual(second.args[0][-1], "bitlogic_ethernet/scripts/build_bitstream.tcl")
+
+    def test_skip_hls_rejected_for_bitlogic(self):
+        with self.assertRaises(SystemExit) as error:
+            cli.main(["build", "--design", "bitlogic", "--skip-hls"])
+        self.assertEqual(error.exception.code, 2)
+
+    @patch.object(cli.subprocess, "run")
     def test_dry_run_does_not_execute(self, run):
         for command in (["build"], ["program"], ["test", "--hardware", "--program"]):
             self.assertEqual(cli.main([*command, "--dry-run"]), 0)
