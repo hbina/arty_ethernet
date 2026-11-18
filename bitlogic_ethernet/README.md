@@ -5,8 +5,8 @@ bitlogic (sibling checkout `../../bitlogic`). It has the same identity: MAC
 `02:00:00:00:00:01` and IP `192.168.1.100`. It replies to ARP requests, sends a
 gratuitous ARP every 5 s, and sends a diagnostics beacon (EtherType `0x88B5`)
 every 1 s. Beyond the HLS design, it checks the FCS of every received frame
-and answers ICMP echo requests, so `ping 192.168.1.100` should work (verified
-in simulation; not yet on the board). It uses the same pins and XDC (`constraints/arty_a7.xdc`).
+answers ICMP echo requests, so `ping 192.168.1.100` should work (verified
+in simulation; not yet on the board), and learns ARP peers into a 16-entry cache. It uses the same pins and XDC (`constraints/arty_a7.xdc`).
 
 ```sh
 python3 build.py build --design bitlogic        # generate RTL, then Vivado → bitlogic_ethernet/build/bitlogic_ethernet.bit
@@ -23,7 +23,7 @@ physical meaning is Verilog.
 | Piece | Kind | File |
 |---|---|---|
 | MII RX assembly, preamble/SFD, FCS check and strip, RX ring producer | bitlogic | `src/rx.rs` |
-| RX consumer, ARP and IPv4/ICMP parse and checksums, timers, TX frame preparation (ROM templates and echo-reply copy), counters | bitlogic | `src/proto.rs` |
+| RX consumer, ARP and IPv4/ICMP parse and checksums, ARP peer cache, timers, TX frame preparation (ROM templates and echo-reply copy), counters | bitlogic | `src/proto.rs` |
 | TX ring consumer, preamble/SFD, padding, CRC-32 FCS, IFG | bitlogic | `src/tx.rs` |
 | LED activity/frame-count status (100 MHz domain) | bitlogic | `src/status.rs` |
 | Shared helpers: hex digit, byte/nibble select, field shift-in, counters, CRC-32 byte, Internet checksum arithmetic | bitlogic (inlined at each call) | `src/ops.rs` |
@@ -71,7 +71,13 @@ Design rules that make the split work:
 - **Helpers are `#[logic]` functions.** The units call `src/ops.rs` helpers
   (`crc32_byte`, `hex_digit`, `shift_in48`, …). bitlogic inlines each call, so
   helpers add no ports or registers; each call is its own copy of the logic.
-- **Frame templates live in a ROM by choice.** The 143-byte beacon and 42-byte
+- **Arrays and enums.** Unit phases are `#[derive(LogicValue)]` enums matched
+  with `match`; the byte/nibble selectors in `ops.rs`, the beacon counter
+  selection use bitlogic arrays (`t.at(i)`, `t.set(i, v)`). The peer cache is
+  one line, `fixed_map!(pub mod peer_cache: Bits<32> => Bits<48>, capacity = 16)`,
+  which generates the cache type and its lookup/update functions; the protocol
+  unit looks the sender up once and passes the result to `peer_cache::store`.
+- **Frame templates live in a ROM by choice.** The 185-byte beacon and 42-byte
   ARP frames are constant except for a few fields. A 512 × 9 ROM (half a BRAM)
   plus a substitution step is cheaper than building each byte from the index in
   logic, so the ROM stays even though helpers are now available.
@@ -97,8 +103,18 @@ boundary and uses explicit memory reads.
   checksums incrementally (RFC 1624). Everything else (TOS, ID, flags,
   identifier, sequence, data) is copied. Ethernet padding is not echoed.
   Requests up to 1472 data bytes (a 1500-byte datagram) are answered.
+- ARP peer cache (new): 16 entries of `{IP, MAC}` in registers, maintained by
+  the RFC 826 merge rules. A well-formed ARP request or reply (opcode 1 or 2,
+  to our MAC or broadcast) whose sender IP is cached refreshes that entry's MAC;
+  one whose target IP is ours adds its sender to the first vacant slot, or
+  replaces slots round-robin (oldest addition first) when the cache is full. Sender IP 0.0.0.0 (an RFC 5227 probe) is never
+  learned. The beacon's `PEERS` field reports the number of valid entries.
+  Nothing transmits from the cache yet; it is the lookup a UDP or other
+  host-initiated service would use.
 - Protocol: `RX`, `RXQ`, `TXD`, `ARP` and `UP` have the HLS semantics. `RXP`
-  counts frames that are neither a valid ARP request nor a valid echo request.
+  counts frames that are neither a valid ARP request, nor a valid echo
+  request, nor used by the peer cache (so an ARP request for another host from
+  a cached sender refreshes the cache and is not a drop).
   `ICMP` counts valid echo requests (a full TX ring drops the reply and
   increments `TXD`, as for ARP). The handler now reads every received byte, so
   timer ticks stay pending until IDLE serves them instead of being lost while
@@ -106,7 +122,7 @@ boundary and uses explicit memory reads.
   time; the HLS design drops that beacon.
 - TX: frames are padded to 60 bytes, the FCS is sent LSB first, and the IFG is
   24 nibble cycles. The beacon text matches the HLS beacon up to `UP=`, then
-  appends ` FCS=xxxxxxxx ICMP=xxxxxxxx` (170-byte frame body).
+  appends ` FCS=xxxxxxxx ICMP=xxxxxxxx PEERS=xxxxxxxx` (185-byte frame body).
 
 Changes from the HLS top level:
 
@@ -123,7 +139,8 @@ Changes from the HLS top level:
 | `tests/steps.rs` | Native Rust vs bitlogic IR on 20,000 random inputs per function, including unreachable states; LED sequence; `ops.rs` helpers vs independent definitions (hex, byte/nibble select, CRC-32 vs the MSB-first reference, ones'-complement addition, RFC 1624 update vs recomputing, the RX CRC residue) |
 | `tests/endpoint.rs` | Cycle model of `eth_core.v`: ARP reply bytes, ignored frames, beacon counters/text, gratuitous ARP, gratuitous ARP then beacon on coinciding ticks, IFG, maximum/oversized frames, TX ring overflow; the IR backend matches native cycle for cycle on ARP, ICMP and bad-FCS traffic |
 | `tests/icmp.rs` | Byte-exact echo replies for 0, 1, 17, 56 and 1472 data bytes with nonzero sender padding; 13 invalid variants (wrong IP/MAC, broadcast, bad IPv4 or ICMP checksum, fragments, options, other protocol, echo reply, nonzero code, bad lengths) are counted, not answered; bad-FCS frames are dropped and counted; a beacon tick during a long echo is not lost; 40 random frames (valid, invalid, bad FCS, ARP) match the oracle |
-| `tests/hdl.rs` | Generated + handwritten Verilog in Vivado xsim matches the Rust cycle model on all 24,000 cycles of a mixed scenario including echo requests and a bad FCS |
+| `tests/peers.rs` | Peer cache contents compared after every frame with an independent RFC 826 model over 400 random ARP frames (24 sender IPs including 0.0.0.0, requests/replies/bad opcodes, ours/other/broadcast destinations, bad hardware length), so the cache fills and replaces entries; ARP replies, `RXP` and the beacon's `PEERS` on the wire; a directed refresh/probe/malformed sequence |
+| `tests/hdl.rs` | Generated + handwritten Verilog in Vivado xsim matches the Rust cycle model on all 30,000 cycles of a mixed scenario including echo requests, a bad FCS and 21 peers (the cache fills and wraps) |
 | `tests/top.rs` | Board-level xsim of `arty_top` with Xilinx PLL/BUFG/ODDR models and an asynchronous PHY clock (see below) |
 
 Expected frames, the CRC (MSB-first form), MII encoding/decoding, the RFC 1071
@@ -131,7 +148,12 @@ Internet checksum and ICMP request/reply builders live in `tests/common`,
 written independently of the design. Expected echo replies recompute both
 checksums from scratch rather than updating them. Disabling pending ticks, the
 ICMP checksum update, FCS enforcement or ICMP checksum verification each makes
-at least one test fail. The xsim tests need Vivado
+at least one test fail, as does each of seven peer-cache mutations (learning
+0.0.0.0, adding without being the target, no refresh, refreshing the wrong
+slot, a stuck insertion slot, a miscount, and counting learned frames as
+drops; applied to the earlier hand-written cache). The generated
+`fixed_map!` code has its own mutation checks in bitlogic's
+`tests/collections.rs`. The xsim tests need Vivado
 (`XILINX_ROOT`, default `~/Xilinx/2025.2`). Set `BITLOGIC_ETHERNET_SKIP_HDL=1`
 to skip them explicitly.
 
@@ -167,17 +189,22 @@ cd bitlogic_ethernet/target/tmp/xsim_arty_top
 
 Vivado 2025.2, `xc7a100ticsg324-1L`, measured 2026-11-18:
 
-| Metric | bitlogic (ARP + beacon + FCS check + ICMP echo) | HLS design (ARP + beacon) |
+| Metric | bitlogic (ARP + beacon + FCS check + ICMP echo + peer cache) | HLS design (ARP + beacon) |
 |---|---|---|
-| Slice LUTs | 1,304 | 2,228 |
-| Slice registers | 1,510 | 1,334 |
+| Slice LUTs | 1,396 | 2,228 |
+| Slice registers | 2,047 | 1,334 |
 | Block RAM tiles | 6.5 | — |
-| Setup WNS / hold WHS | +5.047 ns / +0.116 ns, 0 failing endpoints | — |
-| `eth_rx_clk` (40 ns) setup slack | +25.679 ns | — |
+| Setup WNS / hold WHS | +4.879 ns / +0.097 ns, 0 failing endpoints | — |
+| `eth_rx_clk` (40 ns) setup slack | +25.823 ns | — |
 | `report_cdc` | 2 endpoints, both Safe (ASYNC_REG synchronizers) | — |
 
-Before FCS checking and ICMP echo the bitlogic design used 889 LUTs and 1,050
-registers. The overall WNS is in the 100 MHz LED domain.
+History of the bitlogic design: 889 LUTs / 1,050 registers (ARP + beacon),
+then 1,304 / 1,510 with FCS checking and ICMP echo, then 1,413 / 2,051 with a
+hand-written peer cache. Generating the cache with `fixed_map!` (which adds a
+vacant-slot search) gives the current 1,396 / 2,047. The cache adds about 537
+registers, less than its 1,296 state bits, because nothing reads the cached
+MACs yet and synthesis can remove those 768 flops (inferred from the counts, not confirmed in the synthesis log). The
+overall WNS is in the 100 MHz LED domain.
 
 No critical warnings were reported. These are post-route static results, not
 board validation.
@@ -194,6 +221,8 @@ board validation.
   processes frames faster than they arrive (one cycle per byte to parse, plus
   one per byte to copy an echo request, against two cycles per byte on the
   wire), so the ring cannot fill in these tests.
+- The peer cache is observable only through `PEERS`; no feature transmits to
+  a cached peer yet, and entries never expire.
 - ICMP echo is the only IPv4 service. There is no IPv4 option handling,
   fragment reassembly, broadcast ping or ICMP error generation. The
   `tests/hw/test_icmp.py` board test exists but has not been run.

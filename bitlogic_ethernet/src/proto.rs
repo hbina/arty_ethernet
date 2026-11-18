@@ -3,6 +3,13 @@
 //! `ethernet_protocol_handler.h` and `ethernet_tx_payloads.h` at the frame
 //! level; ICMP echo is new in this design.
 //!
+//! ARP senders are learned into a 16-entry peer cache using the RFC 826 merge
+//! rules: a valid ARP request or reply whose sender IP is cached refreshes
+//! that entry's MAC, and one whose target IP is ours adds the sender
+//! (into a vacant slot, else replacing slots round-robin, which is oldest
+//! first because entries are never removed). Sender IP 0.0.0.0
+//! (an RFC 5227 probe) is never learned. Beacons report the cached count.
+//!
 //! Phases:
 //! - `IDLE` (0): pop an RX frame, else start a pending gratuitous ARP, else a
 //!   pending beacon. Timer ticks stay pending until IDLE serves them.
@@ -23,10 +30,23 @@ use crate::ops::{
 };
 use bitlogic::{Bits, LogicValue, bits, logic};
 
-pub const PHASE_IDLE: u64 = 0;
-pub const PHASE_PARSE: u64 = 1;
-pub const PHASE_PREP: u64 = 2;
-pub const PHASE_COPY: u64 = 3;
+/// Protocol unit phase (see the module documentation). `Idle` is 0, the
+/// reset value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
+pub enum Phase {
+    Idle,
+    Parse,
+    Prep,
+    Copy,
+}
+
+/// Beacon frame body length (`consts::BEACON_FRAME_BODY_LEN`).
+const BEACON_LEN: Bits<11> = bits(crate::consts::BEACON_FRAME_BODY_LEN);
+
+// ARP peer cache: sender IPv4 address to MAC address.
+bitlogic::fixed_map!(pub mod peer_cache: Bits<32> => Bits<48>, capacity = 16);
+pub const PEER_CACHE_ENTRIES: usize = peer_cache::CAPACITY;
+pub type PeerCache = peer_cache::Map;
 
 /// TTL written into echo replies.
 pub const REPLY_TTL: u64 = 64;
@@ -81,6 +101,8 @@ pub struct Snapshot {
     pub beacons: Bits<32>,
     pub fcs_errors: Bits<32>,
     pub icmp_replies: Bits<32>,
+    /// Valid peer cache entries.
+    pub peers: Bits<32>,
 }
 
 /// The TX frame being prepared, with the values it substitutes.
@@ -110,7 +132,7 @@ pub struct Counters {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
 pub struct ProtoState {
-    pub phase: Bits<2>,
+    pub phase: Phase,
     pub index: Bits<11>,
     /// Consumer side of the RX ring.
     pub rx_rd_ptr: Bits<4>,
@@ -124,6 +146,7 @@ pub struct ProtoState {
     pub parsed: Parsed,
     pub request: Request,
     pub counters: Counters,
+    pub peers: PeerCache,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
@@ -212,23 +235,19 @@ pub fn template_byte(rom: Bits<9>, r: Request) -> Bits<8> {
     } else {
         r.peer_ip.concat::<16, 48>(bits::<16>(0))
     };
-    let counter = if source == bits::<4>(3) {
-        t.rx_packets
-    } else if source == bits::<4>(4) {
-        t.rx_queue_drops
-    } else if source == bits::<4>(5) {
-        t.rx_proto_drops
-    } else if source == bits::<4>(6) {
-        t.tx_drops
-    } else if source == bits::<4>(7) {
-        t.arp_replies
-    } else if source == bits::<4>(8) {
-        t.beacons
-    } else if source == bits::<4>(9) {
-        t.fcs_errors
-    } else {
-        t.icmp_replies
-    };
+    // Sources 3..=11, in `rom::COUNTER_SOURCES` order.
+    let counter = [
+        t.rx_packets,
+        t.rx_queue_drops,
+        t.rx_proto_drops,
+        t.tx_drops,
+        t.arp_replies,
+        t.beacons,
+        t.fcs_errors,
+        t.icmp_replies,
+        t.peers,
+    ]
+    .at(source - bits::<4>(3));
     if !rom.bit(8) {
         rom.slice::<8>(0)
     } else if source < bits::<4>(3) {
@@ -247,10 +266,10 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     let n = s.counters;
     let i = s.index;
 
-    let idle = s.phase == bits::<2>(0);
-    let parsing = s.phase == bits::<2>(1);
-    let preparing = s.phase == bits::<2>(2);
-    let copying = s.phase == bits::<2>(3);
+    let idle = s.phase == Phase::Idle;
+    let parsing = s.phase == Phase::Parse;
+    let preparing = s.phase == Phase::Prep;
+    let copying = s.phase == Phase::Copy;
 
     // Free-running interval timers. A tick stays pending until IDLE serves it.
     let beacon_tick = s.beacon_timer == c.beacon_interval - bits::<32>(1);
@@ -401,7 +420,8 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     };
     let parse_done = parsing && i == parse_end;
     let dest_ok = p.dst_mac == c.mac || p.dst_mac == bits::<48>(0xffff_ffff_ffff);
-    let arp_ok = !truncated
+    // A well-formed Ethernet/IPv4 ARP request or reply.
+    let arp_valid = !truncated
         && dest_ok
         && p.ethertype == bits::<16>(0x0806)
         && body_len >= bits::<11>(42)
@@ -409,8 +429,15 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
         && p.proto_type == bits::<16>(0x0800)
         && p.hw_len == bits::<8>(6)
         && p.proto_len == bits::<8>(4)
-        && p.opcode == bits::<16>(1)
-        && p.target_ip == c.ip;
+        && (p.opcode == bits::<16>(1) || p.opcode == bits::<16>(2));
+    let arp_for_us = arp_valid && p.target_ip == c.ip;
+    let arp_ok = arp_for_us && p.opcode == bits::<16>(1);
+    let sender = peer_cache::find(s.peers, p.sender_ip);
+    let known_sender = sender.hit;
+    // The frame changed the cache (or would have, but for refreshing an
+    // identical entry): it was used, not dropped.
+    let learn = parse_done && arp_valid && p.sender_ip != bits::<32>(0);
+    let arp_learns = arp_valid && p.sender_ip != bits::<32>(0) && (known_sender || arp_for_us);
     // Echo request: unicast to us, IPv4 without options or fragmentation,
     // both checksums valid, and the whole datagram inside the frame.
     let body16 = bits::<5>(0).concat::<11, 16>(body_len);
@@ -443,6 +470,7 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
         beacons: n.beacons,
         fcs_errors: input.rx_fcs_errors,
         icmp_replies: n.icmp_replies,
+        peers: bits::<27>(0).concat::<5, 32>(peer_cache::count(s.peers)),
     };
     let request = if start_tx {
         if want_beacon {
@@ -500,44 +528,45 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
         r
     };
 
-    let prep_len = if r.arp {
-        bits::<11>(42)
-    } else {
-        bits::<11>(170)
-    };
+    let prep_len = if r.arp { bits::<11>(42) } else { BEACON_LEN };
     let prep_last = preparing && i == prep_len - bits::<11>(1);
     let copy_last = copying && i == r.len - bits::<11>(1);
 
-    let next_phase = if idle {
-        if pop {
-            bits::<2>(1)
-        } else if start_tx {
-            bits::<2>(2)
-        } else {
-            bits::<2>(0)
-        }
-    } else if parsing {
-        if parse_done {
-            if start_echo {
-                bits::<2>(3)
+    let next_phase = match s.phase {
+        Phase::Idle => {
+            if pop {
+                Phase::Parse
             } else if start_tx {
-                bits::<2>(2)
+                Phase::Prep
             } else {
-                bits::<2>(0)
+                Phase::Idle
             }
-        } else {
-            bits::<2>(1)
         }
-    } else if preparing {
-        if prep_last {
-            bits::<2>(0)
-        } else {
-            bits::<2>(2)
+        Phase::Parse => {
+            if !parse_done {
+                Phase::Parse
+            } else if start_echo {
+                Phase::Copy
+            } else if start_tx {
+                Phase::Prep
+            } else {
+                Phase::Idle
+            }
         }
-    } else if copy_last {
-        bits::<2>(0)
-    } else {
-        bits::<2>(3)
+        Phase::Prep => {
+            if prep_last {
+                Phase::Idle
+            } else {
+                Phase::Prep
+            }
+        }
+        Phase::Copy => {
+            if copy_last {
+                Phase::Idle
+            } else {
+                Phase::Copy
+            }
+        }
     };
     let next_index = if idle || parse_done || prep_last || copy_last {
         bits::<11>(0)
@@ -560,7 +589,10 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
 
     let counters = Counters {
         rx_packets: bump32(n.rx_packets, pop),
-        rx_proto_drops: bump32(n.rx_proto_drops, parse_done && !arp_ok && !echo_ok),
+        rx_proto_drops: bump32(
+            n.rx_proto_drops,
+            parse_done && !arp_learns && !arp_ok && !echo_ok,
+        ),
         tx_drops: bump32(n.tx_drops, tx_dropped),
         arp_replies: bump32(n.arp_replies, want_reply),
         beacons: bump32(n.beacons, want_beacon && start_tx),
@@ -587,6 +619,16 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
         parsed,
         request,
         counters,
+        // RFC 826 merge: refresh a cached sender; add one only when the
+        // request or reply is addressed to our IP.
+        peers: peer_cache::store(
+            s.peers,
+            sender,
+            learn,
+            learn && arp_for_us,
+            p.sender_ip,
+            p.sender_mac,
+        ),
     };
     let arp_bit = if next.request.arp {
         bits::<1>(1)

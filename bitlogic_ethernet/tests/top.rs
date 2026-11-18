@@ -135,12 +135,14 @@ fn board_top_simulates_with_vivado_primitives() {
         );
     }
     let frames = decode(&actual);
+    // The request for another IP refreshes the cached host (not a drop).
     let counts = Counts {
         rx: 4,
-        rx_proto_drops: 2,
+        rx_proto_drops: 1,
         arp: 1,
         fcs: 1,
         icmp: 1,
+        peers: 1,
         ..Counts::default()
     };
     let bodies: Vec<_> = frames.iter().map(|f| f.body.clone()).collect();

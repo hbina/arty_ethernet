@@ -146,7 +146,9 @@ def is_arp_reply_to(parsed, dst_mac, dst_ip):
 
 BEACON_KEYS = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
 # Appended by the bitlogic design; the HLS design sends BEACON_KEYS only.
-BEACON_EXTENDED_KEYS = BEACON_KEYS + ("FCS", "ICMP")
+# Earlier bitlogic builds stop after ICMP; current ones also report PEERS.
+BEACON_EXTENDED_KEYS = BEACON_KEYS + ("FCS", "ICMP", "PEERS")
+BEACON_FORMATS = (BEACON_KEYS, BEACON_EXTENDED_KEYS[:-1], BEACON_EXTENDED_KEYS)
 
 
 def beacon_fields(payload):
@@ -164,7 +166,7 @@ def beacon_fields(payload):
         key, value = field.split("=", 1)
         values[key] = value
 
-    if tuple(["ARTY"] + list(values.keys())) not in (BEACON_KEYS, BEACON_EXTENDED_KEYS):
+    if tuple(["ARTY"] + list(values.keys())) not in BEACON_FORMATS:
         return None
     if values["IP"] != "192.168.001.100" or values["MAC"] != "020000000001":
         return None

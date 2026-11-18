@@ -9,18 +9,18 @@
 //! | 0 | `request.dst_mac` | byte 0..=5, most significant first |
 //! | 1 | `request.peer_mac` | byte 0..=5 |
 //! | 2 | `request.peer_ip` | byte 0..=3 |
-//! | 3..=10 | beacon counters (see [`COUNTER_SOURCES`]) | hex digit 0..=7 |
+//! | 3..=11 | beacon counters (see [`COUNTER_SOURCES`]) | hex digit 0..=7 |
 //!
 //! The beacon text matches `beacon_payload_literal_byte` in the HLS design up
-//! to `UP=`; this design appends ` FCS=` and ` ICMP=` counters.
+//! to `UP=`; this design appends ` FCS=`, ` ICMP=` and ` PEERS=` counters.
 use crate::consts::*;
 use std::fmt::Write;
 
 pub const ROM_DEPTH: usize = 512;
 pub const ARP_BASE: usize = 256;
 
-/// Beacon fields in source order 3..=10, with their text labels.
-pub const COUNTER_SOURCES: [(&str, u16); 8] = [
+/// Beacon fields in source order 3..=11, with their text labels.
+pub const COUNTER_SOURCES: [(&str, u16); 9] = [
     ("RX", 3),
     ("RXQ", 4),
     ("RXP", 5),
@@ -29,6 +29,7 @@ pub const COUNTER_SOURCES: [(&str, u16); 8] = [
     ("UP", 8),
     ("FCS", 9),
     ("ICMP", 10),
+    ("PEERS", 11),
 ];
 
 fn literal(bytes: &[u8]) -> impl Iterator<Item = u16> + '_ {
@@ -44,7 +45,7 @@ fn mac_bytes(mac: u64) -> [u8; 6] {
     [b[2], b[3], b[4], b[5], b[6], b[7]]
 }
 
-/// Beacon frame body: broadcast header, EtherType 0x88B5, 156 text bytes.
+/// Beacon frame body: broadcast header, EtherType 0x88B5, 171 text bytes.
 pub fn beacon_template() -> Vec<u16> {
     let ip = FPGA_IP.to_be_bytes();
     let mut ip_text = String::new();

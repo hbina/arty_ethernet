@@ -30,4 +30,4 @@ pub const IFG_NIBBLES: u64 = 24;
 
 /// Frame bodies (header + payload) built from the template ROM.
 pub const ARP_FRAME_BODY_LEN: u64 = 42;
-pub const BEACON_FRAME_BODY_LEN: u64 = 170;
+pub const BEACON_FRAME_BODY_LEN: u64 = 185;

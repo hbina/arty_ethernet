@@ -78,6 +78,12 @@ fn generated_verilog_matches_cycle_model() {
         mac[5] = k;
         stim.extend(mii_frame(&arp_request(mac, HOST_IP, FPGA_IP), 12));
     }
+    // 20 distinct peers: fills the 16-entry ARP cache and replaces entries.
+    for k in 0..20 {
+        let mut mac = HOST_MAC;
+        mac[4] = k;
+        stim.extend(mii_frame(&arp_request(mac, [10, 0, 0, k], FPGA_IP), 24));
+    }
     stim.extend(mii_frame(
         &ethernet(FPGA_MAC, HOST_MAC, 0x0800, &[5; 1600]),
         24,
@@ -90,9 +96,14 @@ fn generated_verilog_matches_cycle_model() {
         24,
         0x10,
     ));
-    stim.resize(24_000, RxNibble::default());
+    stim.resize(30_000, RxNibble::default());
 
-    let expected: Vec<TxNibble> = run(&mut EthCore::new(Native, config), &stim);
+    let mut model = EthCore::new(Native, config);
+    let expected: Vec<TxNibble> = run(&mut model, &stim);
+    assert!(
+        model.proto.peers.entries.iter().all(|e| e.valid) && model.proto.peers.next.get() == 5,
+        "the scenario must fill the peer cache and wrap its insertion slot"
+    );
     let frames = decode(&expected);
     assert!(
         frames.len() >= 10,

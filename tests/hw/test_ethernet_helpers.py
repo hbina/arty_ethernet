@@ -104,3 +104,6 @@ def test_beacon_accepts_hls_and_extended_formats():
     assert beacon_fields(extended)["ICMP"] == "00000004"
     assert "ICMP" not in beacon_fields(base)
     assert not is_beacon_payload(base + b" FCS=00000003")
+    current = extended + b" PEERS=00000002"
+    assert beacon_fields(current)["PEERS"] == "00000002"
+    assert not is_beacon_payload(base + b" FCS=00000003 PEERS=00000002")

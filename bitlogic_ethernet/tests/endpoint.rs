@@ -87,10 +87,13 @@ fn beacon_reports_counters() {
     stim.resize(81_000, RxNibble::default());
     let frames = decode(&run(&mut core, &stim));
 
+    // The wrong-IP request is not answered, but its sender is already
+    // cached, so it refreshes that entry (RFC 826) instead of being dropped.
     let first = Counts {
         rx: 4,
-        rx_proto_drops: 3,
+        rx_proto_drops: 2,
         arp: 1,
+        peers: 1,
         ..Counts::default()
     };
     let second = Counts { up: 1, ..first };
@@ -221,6 +224,8 @@ fn tx_ring_overflow_counts_drops() {
         rx: requests,
         tx_drops: dropped,
         arp: requests,
+        // One IP with changing MACs: a single, refreshed cache entry.
+        peers: 1,
         ..Counts::default()
     };
     assert!(dropped > 0, "the test must actually overflow the TX ring");

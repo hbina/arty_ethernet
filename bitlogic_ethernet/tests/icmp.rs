@@ -133,6 +133,7 @@ fn bad_fcs_frames_are_dropped_and_counted() {
         rx: 1,
         arp: 1,
         fcs: 2,
+        peers: 1,
         ..Counts::default()
     };
     assert_eq!(

@@ -79,16 +79,17 @@ pub struct Counts {
     pub up: u32,
     pub fcs: u32,
     pub icmp: u32,
+    pub peers: u32,
 }
 
-/// Expected diagnostics beacon frame body (170 bytes, above the minimum).
+/// Expected diagnostics beacon frame body (185 bytes, above the minimum).
 pub fn beacon(c: Counts) -> Vec<u8> {
     let text = format!(
         "ARTY IP=192.168.001.100 MAC=020000000001 RX={:08X} RXQ={:08X} RXP={:08X} \
-         TXD={:08X} ARP={:08X} UDP=00000000 UP={:08X} FCS={:08X} ICMP={:08X}",
-        c.rx, c.rx_queue_drops, c.rx_proto_drops, c.tx_drops, c.arp, c.up, c.fcs, c.icmp
+         TXD={:08X} ARP={:08X} UDP=00000000 UP={:08X} FCS={:08X} ICMP={:08X} PEERS={:08X}",
+        c.rx, c.rx_queue_drops, c.rx_proto_drops, c.tx_drops, c.arp, c.up, c.fcs, c.icmp, c.peers
     );
-    assert_eq!(text.len(), 156);
+    assert_eq!(text.len(), 171);
     ethernet(BROADCAST, FPGA_MAC, 0x88B5, text.as_bytes())
 }
 
