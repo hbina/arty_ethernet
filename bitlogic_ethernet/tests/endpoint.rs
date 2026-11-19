@@ -251,10 +251,7 @@ fn interpreted_ir_matches_native_cycle_for_cycle() {
     stim.extend(mii_frame_bad_fcs(&ping.frame(), 24, 0x8000));
     stim.resize(6_000, RxNibble::default());
     let native = run(&mut EthCore::new(Native, config), &stim);
-    let interpreted = run(
-        &mut EthCore::new(Interpreted::new().unwrap(), config),
-        &stim,
-    );
+    let interpreted = run(&mut EthCore::new(Interpreted::new(), config), &stim);
     assert_eq!(native, interpreted);
     // Two ARP replies, the echo reply, beacon, gratuitous ARP, beacon.
     let frames = decode(&native);

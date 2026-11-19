@@ -12,7 +12,7 @@ if {[info exists ::env(PART)]} {
 }
 
 set generated_dir [file join $flow_dir build rtl]
-set generated [list rx_unit.v proto_unit.v tx_unit.v status_unit.v template_rom.v]
+set generated [list eth_core.v rx_unit.v proto_unit.v tx_unit.v status_unit.v template_rom.v bitlogic_sdp_ram.v]
 foreach name $generated {
     if {![file exists [file join $generated_dir $name]]} {
         error "Generated RTL not found: [file join $generated_dir $name]. Run python3 build.py build --design bitlogic."
@@ -28,7 +28,7 @@ set_property target_language Verilog [current_project]
 foreach name $generated {
     read_verilog [file join $generated_dir $name]
 }
-foreach name [list sdp_ram.v eth_core.v arty_top.v] {
+foreach name [list arty_top.v] {
     read_verilog [file join $flow_dir rtl $name]
 }
 read_xdc [file join $repo_dir constraints arty_a7.xdc]

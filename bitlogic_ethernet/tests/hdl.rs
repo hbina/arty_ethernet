@@ -1,5 +1,5 @@
-//! The generated Verilog plus the handwritten `rtl/eth_core.v` must match the
-//! Rust cycle model output-for-output. Simulated with Vivado xsim, located via
+//! The generated `eth_core` Verilog must match the generated Rust cycle model
+//! output-for-output; both come from the `system!` declaration in `src/core.rs`. Simulated with Vivado xsim, located via
 //! `XILINX_ROOT` (default `~/Xilinx/2025.2`). Set `BITLOGIC_ETHERNET_SKIP_HDL=1`
 //! to skip explicitly on machines without Vivado.
 mod common;
@@ -18,17 +18,17 @@ module tb;
     reg rst = 1'b1;
     reg dv = 1'b0, rxerr = 1'b0;
     reg [3:0] rxd = 4'd0;
-    wire tx_en, rx_active, tx_active, toggle;
+    wire tx_en, rx_active, toggle;
     wire [3:0] txd;
     reg [7:0] stim [0:{last}];
     integer k, f;
     eth_core #(
-        .BEACON_INTERVAL(32'd{beacon}),
-        .GARP_INTERVAL(32'd{garp})
+        .CONFIG_BEACON_INTERVAL(32'd{beacon}),
+        .CONFIG_GARP_INTERVAL(32'd{garp})
     ) dut (
-        .clk(clk), .rst(rst), .eth_rx_dv(dv), .eth_rxd(rxd), .eth_rxerr(rxerr),
-        .eth_tx_en(tx_en), .eth_txd(txd), .rx_active(rx_active),
-        .tx_active(tx_active), .tx_frame_toggle(toggle)
+        .clk(clk), .rst(rst), .mii_dv(dv), .mii_rxd(rxd), .mii_rxerr(rxerr),
+        .tx_en(tx_en), .txd(txd), .rx_active(rx_active),
+        .tx_frame_toggle(toggle)
     );
     initial begin
         $readmemh("stim.hex", stim);
@@ -118,11 +118,6 @@ fn generated_verilog_matches_cycle_model() {
     for (name, text) in generated_files().unwrap() {
         fs::write(dir.join(&name), text).unwrap();
         sources.push(name);
-    }
-    let rtl = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rtl");
-    for name in ["sdp_ram.v", "eth_core.v"] {
-        fs::copy(rtl.join(name), dir.join(name)).unwrap();
-        sources.push(name.into());
     }
     fs::write(dir.join("tb.v"), testbench(stim.len(), config)).unwrap();
     sources.push("tb.v".into());

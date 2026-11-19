@@ -71,12 +71,7 @@ fn board_top_simulates_with_vivado_primitives() {
         sources.push(name);
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for path in [
-        "rtl/sdp_ram.v",
-        "rtl/eth_core.v",
-        "rtl/arty_top.v",
-        "sim/tb_arty_top.v",
-    ] {
+    for path in ["rtl/arty_top.v", "sim/tb_arty_top.v"] {
         let name = path.rsplit('/').next().unwrap().to_owned();
         fs::copy(manifest.join(path), dir.join(&name)).unwrap();
         sources.push(name);

@@ -296,7 +296,10 @@ pub fn decode(trace: &[TxNibble]) -> Vec<TxFrame> {
 }
 
 pub fn run<S: Steps>(core: &mut EthCore<S>, stimulus: &[RxNibble]) -> Vec<TxNibble> {
-    stimulus.iter().map(|&input| core.clock(input)).collect()
+    stimulus
+        .iter()
+        .map(|&input| core.clock(input).into())
+        .collect()
 }
 
 /// Deterministic 64-bit generator (xorshift64*).

@@ -92,21 +92,20 @@ module arty_top #(
 
     wire tx_frame_toggle_eth;
     wire rx_active_eth;
-    wire tx_active_eth;
 
+    // Generated from the `system!` declaration in src/core.rs.
     eth_core #(
-        .BEACON_INTERVAL(BEACON_INTERVAL),
-        .GARP_INTERVAL(GARP_INTERVAL)
+        .CONFIG_BEACON_INTERVAL(BEACON_INTERVAL),
+        .CONFIG_GARP_INTERVAL(GARP_INTERVAL)
     ) eth_core_i (
         .clk(eth_rx_clk),
         .rst(eth_rst),
-        .eth_rx_dv(eth_rx_dv),
-        .eth_rxd(eth_rxd),
-        .eth_rxerr(eth_rxerr),
-        .eth_tx_en(eth_tx_en),
-        .eth_txd(eth_txd),
+        .mii_dv(eth_rx_dv),
+        .mii_rxd(eth_rxd),
+        .mii_rxerr(eth_rxerr),
+        .tx_en(eth_tx_en),
+        .txd(eth_txd),
         .rx_active(rx_active_eth),
-        .tx_active(tx_active_eth),
         .tx_frame_toggle(tx_frame_toggle_eth)
     );
 
@@ -117,7 +116,7 @@ module arty_top #(
     (* ASYNC_REG = "TRUE" *) reg [1:0] activity_sync = 2'b00;
     reg activity_eth = 1'b0;
     always @(posedge eth_rx_clk)
-        activity_eth <= rx_active_eth | tx_active_eth;
+        activity_eth <= rx_active_eth | eth_tx_en;
     always @(posedge CLK100MHZ) begin
         tx_frame_toggle_sync <= {tx_frame_toggle_sync[1:0], tx_frame_toggle_eth};
         activity_sync <= {activity_sync[0], activity_eth};

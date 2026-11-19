@@ -2,9 +2,11 @@
 //!
 //! The design mirrors `hls_ethernet/` at the Ethernet-frame level. Every
 //! `#[logic]` function here is a pure, untimed transformation `state -> next`.
-//! Registers, RAMs, the template ROM, clocks, resets and clock-domain crossings
-//! are handwritten Verilog under `rtl/` (plus the thin register units emitted by
-//! [`hdl`]). See `README.md` in this directory for the block diagram.
+//! [`core`] declares how the Ethernet units, RAMs and template ROM connect with
+//! `bitlogic::system!`, which generates both the Rust cycle model and the
+//! `eth_core` Verilog. Clocks, resets and clock-domain crossings stay in the
+//! handwritten `rtl/arty_top.v`. See `README.md` in this directory for the
+//! block diagram.
 //!
 //! Domains:
 //! - `eth_rx_clk` (25 MHz at 100 Mb/s): [`rx::rx_step`], [`proto::proto_step`],
@@ -12,6 +14,7 @@
 //! - `CLK100MHZ`: [`status::status_step`] drives the LEDs.
 
 pub mod consts;
+pub mod core;
 pub mod hdl;
 pub mod ops;
 pub mod proto;
