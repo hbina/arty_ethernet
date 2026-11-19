@@ -33,8 +33,10 @@ bitlogic pure next-state functions written in Rust. It
 has the same MAC/IP, ARP replies, gratuitous ARP and pins. It also checks the
 FCS of received frames, answers ICMP echo requests (ping), and learns ARP
 peers into a 16-entry cache; its beacon appends `FCS=`, `ICMP=` and `PEERS=`
-fields. Clocks,
-RAMs and clock-domain crossings are handwritten Verilog. It requires Rust/Cargo
+fields. The core's units, RAMs and template ROM are wired by a
+`bitlogic::system!` declaration that generates both the Verilog and the Rust
+cycle model; clocks, resets and clock-domain crossings are handwritten
+Verilog. It requires Rust/Cargo
 and the sibling `../bitlogic` checkout. See
 [bitlogic_ethernet/README.md](bitlogic_ethernet/README.md).
 
