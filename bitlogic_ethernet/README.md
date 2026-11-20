@@ -1,6 +1,7 @@
 # bitlogic Ethernet endpoint
 
-A reimplementation of the `hls_ethernet/` Layer-2 endpoint using
+A reimplementation of the former `hls_ethernet/` Layer-2 endpoint (removed
+2026-11-20; see git history) using
 bitlogic (sibling checkout `../../bitlogic`). It has the same identity: MAC
 `02:00:00:00:00:01` and IP `192.168.1.100`. It replies to ARP requests, sends a
 gratuitous ARP every 5 s, and sends a diagnostics beacon (EtherType `0x88B5`)
@@ -9,7 +10,7 @@ answers ICMP echo requests, so `ping 192.168.1.100` should work (verified
 in simulation; not yet on the board), and learns ARP peers into a 16-entry cache. It uses the same pins and XDC (`constraints/arty_a7.xdc`).
 
 ```sh
-python3 build.py build --design bitlogic        # generate RTL, then Vivado → bitlogic_ethernet/build/bitlogic_ethernet.bit
+python3 build.py build                          # generate RTL, then Vivado → bitlogic_ethernet/build/bitlogic_ethernet.bit
 python3 build.py program --bitfile bitlogic_ethernet/build/bitlogic_ethernet.bit
 cargo test --release --locked --manifest-path bitlogic_ethernet/Cargo.toml
 ```
@@ -87,7 +88,7 @@ Design rules that make the split work:
 - **Config is an input.** MAC, IP and the timer intervals enter `proto_step` as
   inputs, tied to `eth_core` parameters. Tests use short intervals.
 
-## Behavior relative to the HLS design
+## Behavior relative to the former HLS design
 
 ARP and beacon behavior match at the frame level. Cycle timing differs, because
 HLS scheduled its own pipeline and this design adds a register on each MII
@@ -226,7 +227,7 @@ board validation.
 
 - Simulation does not model PHY timing, MII pad delays or a real link.
   Board-level validation still uses the existing `tests/hw` suite. Run
-  `python3 build.py test --hardware --bitfile bitlogic_ethernet/build/bitlogic_ethernet.bit`
+  `python3 build.py test --hardware`
   after programming.
 - As in the HLS design, TX is clocked by `eth_rx_clk`, not the PHY's
   `eth_tx_clk`, and the XDC has no MII input/output delay constraints.

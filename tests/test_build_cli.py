@@ -13,40 +13,27 @@ spec.loader.exec_module(cli)
 
 class BuildCliTests(unittest.TestCase):
     @patch.object(cli.subprocess, "run")
-    def test_build_runs_hls_before_vivado_and_passes_configuration(self, run):
+    def test_build_generates_rtl_before_vivado_and_passes_configuration(self, run):
         self.assertEqual(cli.main(["build", "--xilinx-root", "/tmp/tools with spaces",
                                    "--part", "test-part"]), 0)
         self.assertEqual(run.call_count, 2)
         first, second = run.call_args_list
-        self.assertEqual(first.args[0][0], "/tmp/tools with spaces/Vitis/bin/vitis-run")
-        self.assertEqual(second.args[0][-1], "hls_ethernet/scripts/build_hls_bitstream.tcl")
+        self.assertEqual(first.args[0][0], "cargo")
+        self.assertIn("bitlogic_ethernet/Cargo.toml", first.args[0])
+        self.assertEqual(second.args[0][0], "/tmp/tools with spaces/Vivado/bin/vivado")
+        self.assertEqual(second.args[0][-1], "bitlogic_ethernet/scripts/build_bitstream.tcl")
         self.assertEqual(first.kwargs["env"]["PART"], "test-part")
         self.assertEqual(first.kwargs["cwd"], cli.ROOT)
 
     @patch.object(cli.subprocess, "run")
     def test_failure_stops_before_vivado(self, run):
-        run.side_effect = subprocess.CalledProcessError(7, "hls")
+        run.side_effect = subprocess.CalledProcessError(7, "cargo")
         self.assertEqual(cli.main(["build"]), 7)
         self.assertEqual(run.call_count, 1)
 
-    @patch.object(cli.subprocess, "run")
-    def test_skip_hls_only_runs_vivado(self, run):
-        self.assertEqual(cli.main(["build", "--skip-hls"]), 0)
-        self.assertEqual(run.call_count, 1)
-        self.assertTrue(run.call_args.args[0][0].endswith("/Vivado/bin/vivado"))
-
-    @patch.object(cli.subprocess, "run")
-    def test_bitlogic_build_generates_rtl_before_vivado(self, run):
-        self.assertEqual(cli.main(["build", "--design", "bitlogic"]), 0)
-        self.assertEqual(run.call_count, 2)
-        first, second = run.call_args_list
-        self.assertEqual(first.args[0][0], "cargo")
-        self.assertIn("bitlogic_ethernet/Cargo.toml", first.args[0])
-        self.assertEqual(second.args[0][-1], "bitlogic_ethernet/scripts/build_bitstream.tcl")
-
-    def test_skip_hls_rejected_for_bitlogic(self):
+    def test_removed_design_option_is_rejected(self):
         with self.assertRaises(SystemExit) as error:
-            cli.main(["build", "--design", "bitlogic", "--skip-hls"])
+            cli.main(["build", "--design", "hls"])
         self.assertEqual(error.exception.code, 2)
 
     @patch.object(cli.subprocess, "run")

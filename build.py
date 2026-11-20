@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_BITFILE = ROOT / "hls_ethernet/build/hls_ethernet.bit"
+DEFAULT_BITFILE = ROOT / "bitlogic_ethernet/build/bitlogic_ethernet.bit"
 
 
 def parser():
@@ -26,11 +26,7 @@ def parser():
     def command(name, help_text):
         return commands.add_parser(name, help=help_text, parents=[common])
 
-    command("hls", "run HLS C simulations, synthesis, and IP export")
-    build = command("build", "build the main Ethernet bitstream (includes HLS)")
-    build.add_argument("--design", choices=("hls", "rtl", "bitlogic"), default="hls",
-                       help="use the main HLS design, the bitlogic design, or the legacy RTL LED design")
-    build.add_argument("--skip-hls", action="store_true", help="reuse existing generated HLS RTL")
+    command("build", "generate the bitlogic RTL and build the Ethernet bitstream")
     command("hw-server", "start the JTAG hardware server in the foreground")
     command("probe", "inspect the JTAG chain using Vivado")
     command("list-targets", "list hardware targets using XSCT")
@@ -44,10 +40,6 @@ def parser():
     test.add_argument("--bitfile", type=Path, default=DEFAULT_BITFILE)
     test.add_argument("--iface", default="eno1")
     test.add_argument("--timeout", type=float, default=8.0)
-    fmt = command("format", "format HLS C++ sources")
-    fmt.add_argument("--check", action="store_true", help="check formatting without changing files")
-    command("install-hooks", "install the formatting pre-commit hook")
-    command("vpp-version", "print the installed v++ version")
     command("clean", "remove generated build outputs and Vivado logs")
     return cli
 
@@ -60,8 +52,6 @@ def main(argv=None):
             cli.error("--program requires --hardware")
         if args.no_build and not args.program:
             cli.error("--no-build requires --program")
-    if args.command == "build" and args.design != "hls" and args.skip_hls:
-        cli.error("--skip-hls applies only to --design hls")
     if not 1 <= args.hw_port <= 65535:
         cli.error("--hw-port must be between 1 and 65535")
 
@@ -81,25 +71,12 @@ def main(argv=None):
     def vivado(script, *extra):
         run(tool("Vivado", "vivado"), "-mode", "batch", "-source", script, *extra)
 
-    def hls():
-        run(tool("Vitis", "vitis-run"), "--mode", "hls", "--tcl",
-            "hls_ethernet/scripts/run_hls.tcl")
-
     try:
-        if args.command == "hls":
-            hls()
-        elif args.command == "build":
-            if args.design == "rtl":
-                vivado("scripts/build_bitstream.tcl")
-            elif args.design == "bitlogic":
-                run("cargo", "run", "--quiet", "--release", "--locked",
-                    "--manifest-path", "bitlogic_ethernet/Cargo.toml",
-                    "--bin", "generate", "--", "bitlogic_ethernet/build/rtl")
-                vivado("bitlogic_ethernet/scripts/build_bitstream.tcl")
-            else:
-                if not args.skip_hls:
-                    hls()
-                vivado("hls_ethernet/scripts/build_hls_bitstream.tcl")
+        if args.command == "build":
+            run("cargo", "run", "--quiet", "--release", "--locked",
+                "--manifest-path", "bitlogic_ethernet/Cargo.toml",
+                "--bin", "generate", "--", "bitlogic_ethernet/build/rtl")
+            vivado("bitlogic_ethernet/scripts/build_bitstream.tcl")
         elif args.command == "hw-server":
             run(tool("Vitis", "hw_server"), "-s", f"tcp::{args.hw_port}")
         elif args.command == "probe":
@@ -127,22 +104,8 @@ def main(argv=None):
             else:
                 cmd += ["tests/test_build_cli.py", "tests/hw/test_ethernet_helpers.py"]
             run(*cmd)
-        elif args.command == "format":
-            files = sorted(path for folder in ("src", "tb")
-                           for path in (ROOT / "hls_ethernet" / folder).rglob("*")
-                           if path.suffix in (".cpp", ".h", ".hpp"))
-            run("clang-format", *(["--dry-run", "--Werror"] if args.check else ["-i"]), *files)
-        elif args.command == "install-hooks":
-            hook = ROOT / ".git/hooks/pre-commit"
-            print(f"Symlink {hook} -> ../../scripts/pre-commit.sh", flush=True)
-            if not args.dry_run:
-                hook.parent.mkdir(parents=True, exist_ok=True)
-                hook.unlink(missing_ok=True)
-                hook.symlink_to("../../scripts/pre-commit.sh")
-        elif args.command == "vpp-version":
-            run(tool("Vitis", "v++"), "--version")
         elif args.command == "clean":
-            paths = [ROOT / name for name in (".Xil", "build", "hls_ethernet/build", "bitlogic_ethernet/build")]
+            paths = [ROOT / name for name in (".Xil", "build", "bitlogic_ethernet/build")]
             paths += sorted({path for pattern in ("vivado*.jou", "vivado*.log", "vivado_pid*.str")
                              for path in ROOT.glob(pattern)})
             for path in paths:

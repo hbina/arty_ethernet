@@ -2,7 +2,6 @@
 .Xil/
 .vitis_data/
 build/
-hls_ethernet/build/
 logs/
 
 # Vivado/Vitis logs and journals
@@ -41,7 +40,11 @@ csim.exe
 *.bit
 *.dcp
 
+# Local packet capture
+/iex_data_broadcast.pcap
+
 # Local editor/OS files
+/.antigravitycli/
 __pycache__/
 .pytest_cache/
 .venv/

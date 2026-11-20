@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 // Arty A7 board top for the bitlogic Ethernet endpoint. Same pins and XDC as
-// hls_ethernet/src/hls_top.v. This is the only module that touches board
+// the former HLS top level (removed; see git history). This is the only module that touches board
 // clocking, the PHY reference clock, resets and clock-domain crossings.
 //
 // Clock domains:

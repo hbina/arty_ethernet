@@ -1,6 +1,7 @@
 //! Arty A7 Layer-2 Ethernet endpoint expressed as bitlogic next-state functions.
 //!
-//! The design mirrors `hls_ethernet/` at the Ethernet-frame level. Every
+//! The design mirrors the former HLS endpoint (removed; see git history) at
+//! the Ethernet-frame level. Every
 //! `#[logic]` function here is a pure, untimed transformation `state -> next`.
 //! [`core`] declares how the Ethernet units, RAMs and template ROM connect with
 //! `bitlogic::system!`, which generates both the Rust cycle model and the

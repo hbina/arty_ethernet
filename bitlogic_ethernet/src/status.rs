@@ -1,4 +1,4 @@
-//! LED status in the 100 MHz domain. Mirrors `ethernet_status_hls.cpp`:
+//! LED status in the 100 MHz domain. Mirrors the former HLS `ethernet_status_hls.cpp`:
 //! `led[0]` holds for 125 ms after RX activity or a transmitted frame, and
 //! `led[3:1]` show the low bits of the transmitted-frame count.
 //!

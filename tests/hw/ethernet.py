@@ -145,7 +145,7 @@ def is_arp_reply_to(parsed, dst_mac, dst_ip):
 
 
 BEACON_KEYS = ("ARTY", "IP", "MAC", "RX", "RXQ", "RXP", "TXD", "ARP", "UDP", "UP")
-# Appended by the bitlogic design; the HLS design sends BEACON_KEYS only.
+# Appended by the bitlogic design; the removed HLS design sent BEACON_KEYS only.
 # Earlier bitlogic builds stop after ICMP; current ones also report PEERS.
 BEACON_EXTENDED_KEYS = BEACON_KEYS + ("FCS", "ICMP", "PEERS")
 BEACON_FORMATS = (BEACON_KEYS, BEACON_EXTENDED_KEYS[:-1], BEACON_EXTENDED_KEYS)

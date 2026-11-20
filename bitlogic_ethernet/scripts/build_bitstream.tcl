@@ -1,6 +1,6 @@
 # Implement the bitlogic Ethernet endpoint for the Arty A7.
 # Expects generated Verilog in bitlogic_ethernet/build/rtl (python3 build.py
-# build --design bitlogic runs the generator first).
+# build runs the generator first).
 set script_dir [file dirname [file normalize [info script]]]
 set flow_dir [file normalize [file join $script_dir ..]]
 set repo_dir [file normalize [file join $flow_dir ..]]
@@ -15,7 +15,7 @@ set generated_dir [file join $flow_dir build rtl]
 set generated [list eth_core.v rx_unit.v proto_unit.v tx_unit.v status_unit.v template_rom.v bitlogic_sdp_ram.v]
 foreach name $generated {
     if {![file exists [file join $generated_dir $name]]} {
-        error "Generated RTL not found: [file join $generated_dir $name]. Run python3 build.py build --design bitlogic."
+        error "Generated RTL not found: [file join $generated_dir $name]. Run python3 build.py build."
     }
 }
 

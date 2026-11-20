@@ -1,4 +1,5 @@
-//! Endpoint identity and sizing. These match `hls_ethernet/src/ethernet_constants.h`.
+//! Endpoint identity and sizing. These match the former HLS design's
+//! `ethernet_constants.h` (removed; see git history).
 
 /// Locally administered unicast MAC 02:00:00:00:00:01.
 pub const FPGA_MAC: u64 = 0x0200_0000_0001;
