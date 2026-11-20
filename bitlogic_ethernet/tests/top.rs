@@ -4,8 +4,9 @@
 //!
 //! Checks, independent of the design where possible:
 //! - the PLL locks, `eth_rstn` releases, `eth_ref_clk` runs at 25 MHz;
-//! - the TX stream matches the Rust cycle model exactly from the first
-//!   post-reset cycle (so the board wrapper adds nothing to the core's I/O);
+//! - the TX stream, crossed into an independent PHY TX clock 400 ppm away
+//!   from the RX clock, carries the Rust cycle model's frames unchanged and
+//!   keeps the inter-frame gap;
 //! - the decoded frames are the expected ARP reply, ICMP echo reply, beacons
 //!   with the right counters and a gratuitous ARP (frames from
 //!   `tests/common`, FCS checked); a frame with a bad FCS is not answered;
@@ -120,16 +121,24 @@ fn board_top_simulates_with_vivado_primitives() {
     );
     assert!(rx_start > lock, "Ethernet reset released before PLL lock");
 
-    // TX: cycle-exact against the model, then frame contents.
+    // TX, sampled on the PHY's TX clock: the model's frames, in order, each
+    // contiguous, with no gap shrunk by more than the FIFO's start jitter.
     let actual = parse_tx(&fs::read_to_string(dir.join("tx.txt")).unwrap());
-    assert_eq!(actual.len(), expected.len());
-    if let Some(k) = (0..expected.len()).find(|&k| actual[k] != expected[k]) {
-        panic!(
-            "first mismatch at cycle {k}: board {:?} model {:?}",
-            actual[k], expected[k]
+    let model_frames = decode(&expected);
+    let frames = decode(&actual);
+    assert_eq!(
+        frames.iter().map(|f| &f.body).collect::<Vec<_>>(),
+        model_frames.iter().map(|f| &f.body).collect::<Vec<_>>(),
+        "board TX frames differ from the model's"
+    );
+    for (pair, model) in frames.windows(2).zip(model_frames.windows(2)) {
+        let gap = pair[1].start - pair[0].end;
+        let model_gap = model[1].start - model[0].end;
+        assert!(
+            gap + 2 >= model_gap.min(24),
+            "inter-frame gap {gap} nibbles (model {model_gap})"
         );
     }
-    let frames = decode(&actual);
     // The request for another IP refreshes the cached host (not a drop).
     let counts = Counts {
         rx: 4,

@@ -10,7 +10,10 @@
 //
 // Inputs:  stim.hex, one {rxerr, dv, rxd[3:0]} byte per eth_rx_clk cycle,
 //          applied from the first cycle after the Ethernet reset releases.
-// Outputs: tx.txt      one "{tx_en}{txd}" line per eth_rx_clk cycle
+// The PHY TX clock runs 300 ppm fast (independent of the RX clock, as on a
+// real link), and TX is sampled on it.
+//
+// Outputs: tx.txt      one "{tx_en}{txd}" line per eth_tx_clk cycle
 //          led.txt     "<time ps> <led hex>" on every LED change
 //          summary.txt PLL lock time, eth_ref_clk period, first RX cycle
 module tb_arty_top;
@@ -31,6 +34,13 @@ module tb_arty_top;
         forever #20.002 rx_clk = ~rx_clk;  // 40.004 ns: 25 MHz - 100 ppm
     end
 
+    reg tx_clk = 1'b0;
+    initial begin
+        wait (eth_rstn === 1'b1);
+        #5.3;
+        forever #19.994 tx_clk = ~tx_clk;  // 39.988 ns: 25 MHz + 300 ppm
+    end
+
     reg dv = 1'b0, rxerr = 1'b0;
     reg [3:0] rxd = 4'd0;
     wire eth_ref_clk, tx_en;
@@ -48,6 +58,7 @@ module tb_arty_top;
         .eth_rx_dv(dv),
         .eth_rxd(rxd),
         .eth_rxerr(rxerr),
+        .eth_tx_clk(tx_clk),
         .eth_tx_en(tx_en),
         .eth_txd(txd),
         .led(led)
@@ -74,6 +85,9 @@ module tb_arty_top;
 
     reg [7:0] stim [0:CYCLES-1];
     integer k, txf;
+    reg running = 1'b0;
+    always @(posedge tx_clk)
+        if (running) #1 $fwrite(txf, "%0d%h\n", tx_en, txd);
     initial begin
         $readmemh("stim.hex", stim);
         txf = $fopen("tx.txt", "w");
@@ -82,11 +96,14 @@ module tb_arty_top;
         @(negedge dut.eth_rst);
         $fwrite(summary, "rx_start_ns %0.3f\n", $realtime);
         #1;
+        running = 1'b1;
         for (k = 0; k < CYCLES; k = k + 1) begin
             {rxerr, dv, rxd} = stim[k][5:0];
             @(posedge rx_clk);
-            #1 $fwrite(txf, "%0d%h\n", tx_en, txd);
         end
+        // Let the TX FIFO drain.
+        repeat (40) @(posedge tx_clk);
+        running = 1'b0;
         // Let the last frame event and the activity holdoff reach the LEDs.
         #(TAIL_NS);
         $fwrite(summary, "end_ns %0.3f\n", $realtime);
