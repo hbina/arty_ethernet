@@ -7,3 +7,4 @@ description = "Arty A7 Layer-2 Ethernet endpoint written as bitlogic next-state 
 
 [dependencies]
 bitlogic = { path = "../../bitlogic/crates/bitlogic" }
+bitlogic-net = { path = "../../bitlogic/crates/bitlogic-net" }

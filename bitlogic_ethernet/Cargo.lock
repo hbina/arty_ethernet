@@ -19,10 +19,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitlogic-net"
+version = "0.1.0"
+dependencies = [
+ "bitlogic",
+]
+
+[[package]]
 name = "bitlogic_ethernet"
 version = "0.1.0"
 dependencies = [
  "bitlogic",
+ "bitlogic-net",
 ]
 
 [[package]]

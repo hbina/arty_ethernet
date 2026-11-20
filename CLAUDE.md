@@ -50,6 +50,10 @@ The XDC at `constraints/arty_a7.xdc` defines `sys_clk_pin` (100 MHz) and `eth_rx
 
 The build runs HLS first (`run_hls.tcl` produces RTL under `hls_ethernet/build/hls/<project>/solution1/syn/verilog/`), then `build_hls_bitstream.tcl` reads those .v files + `hls_top.v` + the XDC and runs synth/opt/place/route/bitstream. Outputs land in `hls_ethernet/build/` (`hls_ethernet.bit`, `timing_summary.rpt`, `utilization.rpt`).
 
+## bitlogic Implementation
+
+`bitlogic_ethernet/` is a parallel implementation of the same endpoint, requested explicitly by the user, using the sibling `../bitlogic` Rust DSL. It extends the HLS behavior with receive FCS checking and ICMP echo replies. Behavior lives in pure `#[logic]` step functions (`src/rx.rs`, `proto.rs`, `tx.rs`, `status.rs`) that call shared `#[logic]` helpers in `src/ops.rs` (bitlogic inlines each call); handwritten Verilog in `bitlogic_ethernet/rtl/` owns RAMs, unit wiring (`eth_core.v`), clocks, resets and CDC (`arty_top.v`). `src/sim.rs` is a cycle-accurate model of `eth_core.v`; keep the two in sync — `tests/hdl.rs` checks them cycle-for-cycle in xsim. Build with `python3 build.py build --design bitlogic`; test with `cargo test --release --locked --manifest-path bitlogic_ethernet/Cargo.toml`. Generated Verilog goes to `bitlogic_ethernet/build/rtl/` (do not edit).
+
 ## Generated Files — Do Not Edit
 
 `hls_ethernet/build/`, `build/`, `.Xil/`, `logs/`, `vivado*.jou`, `vivado*.log`, `clockInfo.txt`. Edit source TCL/C++/Verilog/XDC and rebuild instead. These are also gitignored.
