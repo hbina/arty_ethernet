@@ -206,6 +206,29 @@ python3 build.py install-hooks
 
 Installs the repository pre-commit hook by symlinking `scripts/pre-commit.sh` into `.git/hooks/pre-commit`.
 
+### Die Map
+
+```sh
+python3 build.py die-map --design bitlogic     # or hls, rtl
+```
+
+Draws where a built design was placed on the FPGA. Each build writes a
+routed checkpoint (`<design>/build/*_routed.dcp`). `die-map` asks Vivado for
+the device floorplan and the design's placed cells (`scripts/die_map.tcl`),
+then renders them into one self-contained HTML page
+(`<design>/build/die_map.html`) with `scripts/die_map.py`. The page shows
+every tile on the die and the clock regions, with each placed cell coloured
+by its hierarchy group (`--depth`, default 2 levels). The dump is kept next
+to the page as `die_map.tsv`. To change only the page, re-render it without
+Vivado:
+
+```sh
+python3 scripts/die_map.py render bitlogic_ethernet/build/die_map.tsv out.html --depth 1
+```
+
+`--checkpoint` reads any other `.dcp`. Rendering is deterministic: the same
+dump always gives the same HTML.
+
 ### Legacy RTL Flow
 
 ```sh

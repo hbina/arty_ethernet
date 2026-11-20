@@ -50,8 +50,26 @@ class BuildCliTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
 
     @patch.object(cli.subprocess, "run")
+    def test_die_map_dumps_then_renders_the_designs_checkpoint(self, run):
+        with patch.object(cli.Path, "is_file", return_value=True):
+            self.assertEqual(cli.main(["die-map", "--design", "bitlogic", "--xilinx-root", "/x"]), 0)
+        dump, render = (c.args[0] for c in run.call_args_list)
+        self.assertEqual(dump[1:3], ["scripts/die_map.py", "dump"])
+        self.assertTrue(dump[3].endswith("bitlogic_ethernet/build/bitlogic_ethernet_routed.dcp"))
+        self.assertEqual(dump[-1], "/x/Vivado/bin/vivado")
+        self.assertEqual(render[2], "render")
+        self.assertEqual(render[3], dump[4])
+        self.assertTrue(render[4].endswith("bitlogic_ethernet/build/die_map.html"))
+
+    @patch.object(cli.subprocess, "run")
+    def test_die_map_without_checkpoint_fails_with_hint(self, run):
+        with patch.object(cli.Path, "is_file", return_value=False):
+            self.assertEqual(cli.main(["die-map", "--design", "hls"]), 1)
+        run.assert_not_called()
+
+    @patch.object(cli.subprocess, "run")
     def test_dry_run_does_not_execute(self, run):
-        for command in (["build"], ["program"], ["test", "--hardware", "--program"]):
+        for command in (["build"], ["program"], ["test", "--hardware", "--program"], ["die-map"]):
             self.assertEqual(cli.main([*command, "--dry-run"]), 0)
         run.assert_not_called()
 

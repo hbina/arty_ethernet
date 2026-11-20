@@ -11,6 +11,17 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_BITFILE = ROOT / "hls_ethernet/build/hls_ethernet.bit"
+# Routed checkpoint written by each design's build, and its die map.
+CHECKPOINTS = {
+    "hls": "hls_ethernet/build/hls_ethernet_routed.dcp",
+    "bitlogic": "bitlogic_ethernet/build/bitlogic_ethernet_routed.dcp",
+    "rtl": "build/status_led_routed.dcp",
+}
+DIE_MAPS = {
+    "hls": "hls_ethernet/build/die_map.html",
+    "bitlogic": "bitlogic_ethernet/build/die_map.html",
+    "rtl": "build/die_map.html",
+}
 
 
 def parser():
@@ -31,6 +42,12 @@ def parser():
     build.add_argument("--design", choices=("hls", "rtl", "bitlogic"), default="hls",
                        help="use the main HLS design, the bitlogic design, or the legacy RTL LED design")
     build.add_argument("--skip-hls", action="store_true", help="reuse existing generated HLS RTL")
+    die_map = command("die-map", "draw a built design's placement on the device floorplan (HTML)")
+    die_map.add_argument("--design", choices=tuple(CHECKPOINTS), default="hls",
+                         help="design whose routed checkpoint to read (build it first)")
+    die_map.add_argument("--checkpoint", type=Path, help="read this .dcp instead of the design's")
+    die_map.add_argument("--output", type=Path, help="HTML file to write (default: the design's build/die_map.html)")
+    die_map.add_argument("--depth", type=int, default=2, help="hierarchy levels used to group cells")
     command("hw-server", "start the JTAG hardware server in the foreground")
     command("probe", "inspect the JTAG chain using Vivado")
     command("list-targets", "list hardware targets using XSCT")
@@ -62,6 +79,8 @@ def main(argv=None):
             cli.error("--no-build requires --program")
     if args.command == "build" and args.design != "hls" and args.skip_hls:
         cli.error("--skip-hls applies only to --design hls")
+    if args.command == "die-map" and args.depth < 1:
+        cli.error("--depth must be at least 1")
     if not 1 <= args.hw_port <= 65535:
         cli.error("--hw-port must be between 1 and 65535")
 
@@ -100,6 +119,16 @@ def main(argv=None):
                 if not args.skip_hls:
                     hls()
                 vivado("hls_ethernet/scripts/build_hls_bitstream.tcl")
+        elif args.command == "die-map":
+            checkpoint = (args.checkpoint or ROOT / CHECKPOINTS[args.design]).expanduser().resolve()
+            output = (args.output or ROOT / DIE_MAPS[args.design]).expanduser().resolve()
+            if not args.dry_run and not checkpoint.is_file():
+                raise FileNotFoundError(f"routed checkpoint does not exist: {checkpoint} "
+                                        f"(run: python3 build.py build --design {args.design})")
+            dump = output.with_suffix(".tsv")
+            run(sys.executable, "scripts/die_map.py", "dump", checkpoint, dump,
+                "--vivado", tool("Vivado", "vivado"))
+            run(sys.executable, "scripts/die_map.py", "render", dump, output, "--depth", args.depth)
         elif args.command == "hw-server":
             run(tool("Vitis", "hw_server"), "-s", f"tcp::{args.hw_port}")
         elif args.command == "probe":
@@ -125,7 +154,7 @@ def main(argv=None):
                 if args.no_build:
                     cmd.append("--no-build")
             else:
-                cmd += ["tests/test_build_cli.py", "tests/hw/test_ethernet_helpers.py"]
+                cmd += ["tests/test_build_cli.py", "tests/test_die_map.py", "tests/hw/test_ethernet_helpers.py"]
             run(*cmd)
         elif args.command == "format":
             files = sorted(path for folder in ("src", "tb")

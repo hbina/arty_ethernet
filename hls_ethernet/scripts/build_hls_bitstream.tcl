@@ -33,6 +33,7 @@ synth_design -top hls_top -part $part
 opt_design
 place_design
 route_design
+write_checkpoint -force [file join $flow_dir build hls_ethernet_routed.dcp]
 
 report_timing_summary -file [file join $flow_dir build timing_summary.rpt]
 report_utilization -file [file join $flow_dir build utilization.rpt]
