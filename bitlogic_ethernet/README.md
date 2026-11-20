@@ -7,7 +7,14 @@ bitlogic (sibling checkout `../../bitlogic`). It has the same identity: MAC
 gratuitous ARP every 5 s, and sends a diagnostics beacon (EtherType `0x88B5`)
 every 1 s. Beyond the HLS design, it checks the FCS of every received frame
 answers ICMP echo requests, so `ping 192.168.1.100` should work (verified
-in simulation; not yet on the board), and learns ARP peers into a 16-entry cache. It uses the same pins and XDC (`constraints/arty_a7.xdc`).
+in simulation and on the board), and learns ARP peers into a 16-entry cache. It uses the same pins and XDC (`constraints/arty_a7.xdc`).
+
+It is also an **IEX DEEP market-data feed handler** (added 2026-11-20): it
+parses IEX-TP segments on UDP multicast `233.215.21.4:10378`, keeps a full
+price-level order book per symbol in block RAM, and sends the best bid and
+offer of a symbol each time an atomic book update completes. See
+[IEX DEEP feed handler](#iex-deep-feed-handler). This too is verified in
+simulation only.
 
 ```sh
 python3 build.py build                          # generate RTL, then Vivado → bitlogic_ethernet/build/bitlogic_ethernet.bit
@@ -29,6 +36,8 @@ clock-domain crossings are handwritten Verilog.
 | MII RX assembly, preamble/SFD, FCS check and strip, RX ring producer | bitlogic | `src/rx.rs` |
 | RX consumer, ARP and IPv4/ICMP parse and checksums, ARP peer cache, timers, TX frame preparation (ROM templates and echo-reply copy), counters | bitlogic | `src/proto.rs` |
 | TX ring consumer, preamble/SFD, padding, CRC-32 FCS, IFG | bitlogic | `src/tx.rs` |
+| IEX feed: Ethernet/IPv4/UDP/IEX-TP header checks, message-block walk, sequence tracking, PLU FIFO producer | bitlogic | `src/feed.rs` |
+| Order book: symbol hash table, sorted price-level lists with node pool and free stack, BBO FIFO producer | bitlogic | `src/book.rs` |
 | LED activity/frame-count status (100 MHz domain) | bitlogic | `src/status.rs` |
 | Shared helpers: hex digit, byte/nibble select, field shift-in, counters, CRC-32 byte, Internet checksum arithmetic | bitlogic (inlined at each call) | `src/ops.rs` |
 | Beacon and ARP frame templates (512 × 9 ROM) | generated from Rust | `src/rom.rs` |
@@ -43,6 +52,13 @@ flowchart LR
         rx -- "write" --> rxram[("RX RAM 8×2 KiB<br/>+ meta")]
         rxram -- "read (1 cycle)" --> proto["proto_unit"]
         rom[("template ROM")] -- "read (1 cycle)" --> proto
+        rx -- "write (copy)" --> feedram[("feed RX RAM copy")]
+        feedram --> feed["feed_unit"]
+        feed -- "write" --> plufifo[("PLU FIFO 64")]
+        plufifo --> book["book_unit"]
+        book <--> bookram[("symbol table 2048<br/>node pool 8191<br/>free stack")]
+        book -- "write" --> bbofifo[("BBO FIFO 256")]
+        bbofifo --> proto
         proto -- "write" --> txram[("TX RAM 4×2 KiB<br/>+ meta")]
         txram -- "read (1 cycle)" --> tx["tx_unit"]
         tx --> miiout["MII TX regs"]
@@ -144,7 +160,8 @@ Changes from the HLS top level:
 | `tests/endpoint.rs` | Generated cycle model of `eth_core`: ARP reply bytes, ignored frames, beacon counters/text, gratuitous ARP, gratuitous ARP then beacon on coinciding ticks, IFG, maximum/oversized frames, TX ring overflow; the IR backend matches native cycle for cycle on ARP, ICMP and bad-FCS traffic |
 | `tests/icmp.rs` | Byte-exact echo replies for 0, 1, 17, 56 and 1472 data bytes with nonzero sender padding; 13 invalid variants (wrong IP/MAC, broadcast, bad IPv4 or ICMP checksum, fragments, options, other protocol, echo reply, nonzero code, bad lengths) are counted, not answered; bad-FCS frames are dropped and counted; a beacon tick during a long echo is not lost; 40 random frames (valid, invalid, bad FCS, ARP) match the oracle |
 | `tests/peers.rs` | Peer cache contents compared after every frame with an independent RFC 826 model over 400 random ARP frames (24 sender IPs including 0.0.0.0, requests/replies/bad opcodes, ours/other/broadcast destinations, bad hardware length), so the cache fills and replaces entries; ARP replies, `RXP` and the beacon's `PEERS` on the wire; a directed refresh/probe/malformed sequence |
-| `tests/hdl.rs` | Generated `eth_core` Verilog in Vivado xsim matches the generated Rust cycle model on all 30,000 cycles of a mixed scenario including echo requests, a bad FCS and 21 peers (the cache fills and wraps) |
+| `tests/feed.rs` | IEX feed handler, cycle model against an independent reference book (ordered maps per symbol and side, `tests/common/iex.rs`): all 100,000 packets of `iex_data_broadcast.pcap` at line rate give the same 99,474 BBO records with no drops, gaps or errors; hand-checked sorted levels, updates, deletes (present and absent) and node reuse; the DEEP specification's two-PLU atomic example; 4,000 random PLUs with interleaved trades; foreign group/port, bad IPv4 checksum, wrong protocol/version, payload overrun, count mismatch and sequence gaps counted; ARP and ping answered between feed frames; the probe limit (17 colliding symbols), the 64-node walk limit, node-pool exhaustion and reuse; 300 maximum-size segments at the minimum gap; a saturated PLU FIFO stalls the feed without loss; IR backend equals native cycle for cycle |
+| `tests/hdl.rs` | Generated `eth_core` Verilog in Vivado xsim matches the generated Rust cycle model on all 36,000 cycles of a mixed scenario including echo requests, a bad FCS, 21 peers (the cache fills and wraps) and 12 IEX segments that produce BBO frames |
 | `tests/top.rs` | Board-level xsim of `arty_top` with Xilinx PLL/BUFG/ODDR models and an asynchronous PHY clock (see below) |
 
 Expected frames, the CRC (MSB-first form), MII encoding/decoding, the RFC 1071
@@ -196,9 +213,129 @@ cd bitlogic_ethernet/target/tmp/xsim_arty_top
 ~/Xilinx/2025.2/Vivado/bin/xsim tb_arty_top_sim -gui
 ```
 
+## IEX DEEP feed handler
+
+Diagrams of the data path, from feed packet to BBO frame: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+```text
+RX ring copy -> feed_unit -> PLU FIFO (64) -> book_unit -> BBO FIFO (256) -> proto_unit -> TX ring
+```
+
+**Feed (`src/feed.rs`).** The RX unit writes every frame into two RAM copies;
+the feed unit owns the second copy and its own ring pointer, and the ring is
+full when either consumer is 8 frames behind. A frame is released at byte 38
+unless it is IPv4/UDP to the feed group and port. At byte 81 the rest is
+checked: no IPv4 options or fragments, the IPv4 header checksum, IEX-TP
+version 1, message protocol `0x8004` (DEEP), and the payload inside the
+frame. The walk then reads each message block's length and type (3 cycles)
+and jumps over anything but a 30-byte Price Level Update (`8` buy, `5` sell);
+a PLU reads its flags, skips the timestamp and reads symbol, size and price
+(24 cycles). Each PLU is pushed into the PLU FIFO; a full FIFO stalls the
+walk. A segment whose first sequence number is not the one expected counts
+in `seq_gaps`; header failures, overruns and count mismatches count in
+`malformed`. The feed reads at most one byte per cycle while the wire
+delivers one every two, so it always keeps up.
+
+**Book (`src/book.rs`).** A 2,048-slot symbol table (open addressing, XOR-fold
+hash, at most 16 probes) holds each symbol's bid and offer list heads. Price
+levels are nodes in a shared 8,191-node pool, linked in one sorted list per
+symbol and side (bids descending, offers ascending), so a list head is the
+best level. A PLU walks its list one node per cycle to its price, then
+updates the size, deletes the level (size 0) or inserts a node; deleted nodes
+go onto a free stack and are reused first. Deleting an absent level is a
+no-op, so a feed joined mid-session works. A PLU with Event Flags bit 0 set
+ends an atomic event; the book then reads both heads and writes a BBO record.
+A PLU costs `9 + depth walked` cycles. Failures (table full, a walk past 64
+nodes, pool exhausted) drop the PLU and count in `errors`.
+
+**BBO frames.** The protocol unit drains the BBO FIFO when it is otherwise
+idle and the TX ring has room, up to 46 records per frame, so records batch
+naturally under load. Frame body (multi-byte fields little-endian, as in
+IEX):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 6 | destination MAC (`bbo_mac` parameter, default broadcast) |
+| 6 | 6 | source MAC (`02:00:00:00:00:01`) |
+| 12 | 2 | EtherType `0x88B6` |
+| 14 | 1 | version 1 |
+| 15 | 1 | record count N (1..=46) |
+| 16 | 4 | sequence number of the first record (records sent before it) |
+| 20 | 4 | IEX-TP segments accepted |
+| 24 | 4 | sequence gaps |
+| 28 | 4 | malformed segments |
+| 32 | 4 | book errors |
+| 36 | 4 | RX ring drops |
+| 40 + 32k | 8 | record k: symbol (8 ASCII bytes, space padded) |
+| 48 + 32k | 8 | bid price (IEX price, 4 implied decimals; 0 if no bid) |
+| 56 + 32k | 8 | offer price (0 if no offer) |
+| 64 + 32k | 4 | bid size |
+| 68 + 32k | 4 | offer size |
+
+Feed frames to the group and port are not counted as protocol drops
+(`RXP`), and the protocol unit stops parsing other non-ICMP IPv4 frames at
+byte 42.
+
+### Measured in the cycle model
+
+`cargo run --release --example feed_bench` replays the sample capture at
+100 Mb/s line rate (minimum inter-frame gap, not the recorded timing) and
+measures at the `eth_core` boundary; one cycle is 40 ns.
+
+| Sample capture at line rate | Result |
+|---|---|
+| Input | 100,000 segments, 151,776 messages, 100,021 PLUs, 1.194 s of wire time |
+| Book | 579 symbols, 1,798 nodes used at peak, 0 errors |
+| Output | 99,474 BBO records in 99,231 frames, all equal to the reference |
+| Drops, gaps, malformed | 0, 0, 0 |
+| Peak occupancy | RX ring 2/8, PLU FIFO 1/64, BBO FIFO 9/256 |
+| Busy | feed 36.0%, book 3.5%, TX line 55.9% |
+| Input frame end to BBO frame start | p50 196 cycles (7.84 µs), p99 390 (15.6 µs), max 1,290 (51.6 µs) |
+| Input frame end to record's last nibble | p50 355 cycles (14.2 µs), p99 549 (22.0 µs), max 1,449 (58.0 µs) |
+
+The median latency is store-and-forward: the RX unit publishes a frame only
+after its FCS checks; the feed reads its 82 header bytes and the PLU (about
+110 cycles); the book applies it and writes the record (about 15); the
+protocol unit writes the 72-byte BBO frame into a TX slot before the TX unit
+starts sending it.
+
+Worst sustained load (300 back-to-back 44-PLU segments, every PLU an event
+that updates the deepest level of its side):
+
+| Levels per side | 1 | 16 | 32 | 48 | 56 | 60 | 64 |
+|---|---|---|---|---|---|---|---|
+| Book cycles per PLU | 10 | 25 | 41 | 57 | 65 | 69 | 73 |
+| Book busy | 14.5% | 36.2% | 59.4% | 82.6% | 94.1% | 98.2% | 98.3% |
+| Peak PLU FIFO | 1 | 4 | 19 | 26 | 28 | 64 | 64 |
+| RX frames dropped | 0 | 0 | 0 | 0 | 0 | 0 | 14 |
+
+The wire delivers one PLU every 68.8 cycles at this load, so the book keeps
+up with lists walked up to about 59 levels deep; the deepest side in the
+sample capture has 22.
+
 ## Implementation results
 
-Vivado 2025.2, `xc7a100ticsg324-1L`, measured 2026-11-19 with the core generated by `system!`:
+Vivado 2025.2, `xc7a100ticsg324-1L`, measured 2026-11-20 with the IEX feed
+handler (rebuilt 2026-11-21 with the TX FIFO):
+
+| Metric | With IEX feed handler | Without (2026-11-19) |
+|---|---|---|
+| Slice LUTs | 2,882 (4.5%) | 1,395 |
+| Slice registers | 3,399 (2.7%) | 2,047 |
+| Block RAM tiles | 51.5 of 135 (38.1%): 49 RAMB36 + 5 RAMB18 | 6.5 |
+| Setup WNS / hold WHS | +5.128 ns / +0.033 ns, 0 failing endpoints | +4.799 ns / +0.114 ns |
+| `eth_tx_clk` (40 ns) MII output setup | +20.6 ns, from IOB registers | not constrained |
+| `eth_rx_clk` (40 ns) worst setup | +10.105 ns, an `eth_rxd` input path under the XDC's 30 ns input delay | +26.521 ns |
+| `eth_rx_clk` worst register-to-register path | 18.557 ns, slack +20.681 ns: `eth_rst` fanout to the book state (97% routing). Before the TX FIFO it was 16.868 ns: `node_price` BRAM output, 64-bit price compare, next-node select, `node_size` read address (13 levels) | — |
+
+The register-to-register figures come from `build/internal_paths.rpt`,
+written by every build. The build also writes the routed checkpoint
+`build/routed.dcp`; `python3 scripts/floorplan.py` (from the repository root)
+turns it into `build/floorplan.html`: a block diagram of the board and the
+placed design on the die, colored by module, with I/O banks and pins. The deepest logic is the list walk's one-node-per-cycle loop, which limited
+the core to about 59 MHz in the 2026-11-20 build.
+
+Before the feed handler:
 
 | Metric | bitlogic (ARP + beacon + FCS check + ICMP echo + peer cache) | HLS design (ARP + beacon) |
 |---|---|---|
@@ -220,8 +357,39 @@ registers, less than its 1,296 state bits, because nothing reads the cached
 MACs yet and synthesis can remove those 768 flops (inferred from the counts, not confirmed in the synthesis log). The
 overall WNS is in the 100 MHz LED domain.
 
-No critical warnings were reported. These are post-route static results, not
-board validation.
+The build reports no critical warnings. Until 2026-11-21 it reported 12:
+`arty_top` had no `eth_tx_clk` port, so the XDC's TX clock and output
+delays were never applied. That was a real bug: TX was clocked by
+`eth_rx_clk`, which the PHY recovers from the link partner, while the PHY
+samples TXD on its own `eth_tx_clk`. On the board, about 3.5% of transmitted
+frames arrived with alignment or FCS errors, lost in pairs every ~2.65 ms
+(the beat of a ~15 ppm offset), and a flood ping of 1472-byte echoes lost
+11%. TX now crosses into `eth_tx_clk` through a 16-entry FIFO in
+`arty_top.v`; the MII TX outputs come from IOB registers (setup slack
++20.6 ns). These are post-route static results, not board validation.
+
+## Board results
+
+Arty A7-100T on a direct 100 Mb/s full-duplex link to a PC, 2026-11-21,
+`sudo scripts/board_bringup.sh eno1` (logs under `logs/board_<timestamp>/`).
+Each replay programs the board first, so the book starts empty, then sends
+all 100,000 packets of `iex_data_broadcast.pcap` with `tcpreplay` and
+compares every BBO record with a reference book computed by
+`scripts/iex_board_replay.py`:
+
+| Replay rate | BBO frames | Records (of 99,474) | Board counters | Host NIC errors |
+|---|---|---|---|---|
+| 20 Mb/s | 99,235 | all match | 0 gaps, malformed, book errors, RX drops | none |
+| 80 Mb/s | 99,231 | all match | same | none |
+| topspeed (84.3 Mb/s of frames, the full 100 Mb/s wire) | 99,231 | all match | same | none |
+
+The `tests/hw` suite (16 tests, including ICMP echo up to 1472 bytes) also
+passes. Before the TX FIFO, the same replays lost about 3.8% of records to
+corrupted TX frames (see the timing notes above) while the board's own
+counters stayed at zero. `tcpreplay` rates count frame bytes only: at the
+capture's 125-byte average, adding FCS, preamble and the minimum gap (24
+bytes) makes 84,124 frames/s about 100.5 Mb/s, so the topspeed run is the
+link saturated.
 
 ## Limits
 
@@ -229,12 +397,22 @@ board validation.
   Board-level validation still uses the existing `tests/hw` suite. Run
   `python3 build.py test --hardware`
   after programming.
-- As in the HLS design, TX is clocked by `eth_rx_clk`, not the PHY's
-  `eth_tx_clk`, and the XDC has no MII input/output delay constraints.
-- RX ring overflow is implemented but not exercised. The protocol unit
-  processes frames faster than they arrive (one cycle per byte to parse, plus
-  one per byte to copy an echo request, against two cycles per byte on the
-  wire), so the ring cannot fill in these tests.
+- The TX FIFO adds about 9 `eth_tx_clk` cycles (~360 ns) to every frame and
+  can shorten an inter-frame gap by a cycle or two. A mid-frame underrun is
+  not expected (a 1518-byte frame drifts by ~3 entries at 1,000 ppm) and is
+  not reported; the frame would fail its FCS at the receiver.
+- The IEX feed handler is verified in simulation and by replaying one
+  capture on the board, both against references written for these tests. Only Price Level Updates are used: trading status,
+  halts, auctions and trades are skipped, and there is no gap recovery (a
+  sequence gap is counted, not filled). Symbols are never removed from the
+  table. The book RAMs are not cleared by `eth_rstn`; the book's symbol table
+  is invalidated by its `Clear` phase after reset (2,048 cycles, during which
+  PLUs queue), which makes the stale node contents unreachable.
+- BBO latency is store-and-forward at each stage; nothing is cut through.
+- RX ring overflow is not exercised by a test. The protocol and feed units
+  read frames faster than they arrive, so only a book slower than the wire
+  can fill the ring: `feed_bench` reaches it with 64-level lists (14 frames
+  dropped and counted), but no test checks the output after a drop.
 - The peer cache is observable only through `PEERS`; no feature transmits to
   a cached peer yet, and entries never expire.
 - ICMP echo is the only IPv4 service. There is no IPv4 option handling,

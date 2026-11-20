@@ -12,7 +12,7 @@ if {[info exists ::env(PART)]} {
 }
 
 set generated_dir [file join $flow_dir build rtl]
-set generated [list eth_core.v rx_unit.v proto_unit.v tx_unit.v status_unit.v template_rom.v bitlogic_sdp_ram.v]
+set generated [list eth_core.v rx_unit.v proto_unit.v feed_unit.v book_unit.v tx_unit.v status_unit.v template_rom.v bitlogic_sdp_ram.v]
 foreach name $generated {
     if {![file exists [file join $generated_dir $name]]} {
         error "Generated RTL not found: [file join $generated_dir $name]. Run python3 build.py build."
@@ -37,8 +37,13 @@ synth_design -top arty_top -part $part
 opt_design
 place_design
 route_design
+# Routed design, for floorplan and post-route inspection
+# (scripts/floorplan.py reads it).
+write_checkpoint -force [file join $flow_dir build routed.dcp]
 
 report_timing_summary -file [file join $flow_dir build timing_summary.rpt]
+# Worst register-to-register paths (pad timing excluded): the logic depth.
+report_timing -group [get_clocks eth_rx_clk_pin] -from [all_registers] -to [all_registers] -max_paths 10 -nworst 1 -file [file join $flow_dir build internal_paths.rpt]
 report_utilization -file [file join $flow_dir build utilization.rpt]
 report_cdc -file [file join $flow_dir build cdc.rpt]
 write_bitstream -force [file join $flow_dir build bitlogic_ethernet.bit]

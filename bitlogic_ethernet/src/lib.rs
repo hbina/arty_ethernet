@@ -11,11 +11,13 @@
 //!
 //! Domains:
 //! - `eth_rx_clk` (25 MHz at 100 Mb/s): [`rx::rx_step`], [`proto::proto_step`],
-//!   [`tx::tx_step`].
+//!   [`feed::feed_step`], [`book::book_step`], [`tx::tx_step`].
 //! - `CLK100MHZ`: [`status::status_step`] drives the LEDs.
 
+pub mod book;
 pub mod consts;
 pub mod core;
+pub mod feed;
 pub mod hdl;
 pub mod ops;
 pub mod proto;

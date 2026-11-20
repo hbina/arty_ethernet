@@ -35,7 +35,13 @@ The endpoint uses MAC `02:00:00:00:00:01` and IP `192.168.1.100`. It:
 - sends a broadcast diagnostics beacon on EtherType `0x88B5` every second;
 - checks the FCS of received frames;
 - answers ICMP echo requests (`ping 192.168.1.100`);
-- learns ARP peers into a 16-entry cache.
+- learns ARP peers into a 16-entry cache;
+- handles the IEX DEEP market-data feed (UDP multicast `233.215.21.4:10378`):
+  keeps a price-level order book per symbol in block RAM and sends the best
+  bid and offer (EtherType `0x88B6`) after each atomic book update. Verified
+  in simulation and on the board (2026-11-21) against
+  `iex_data_broadcast.pcap`: replayed at full 100 Mb/s line rate, all 99,474 BBO
+  records match a reference book (`sudo scripts/board_bringup.sh eno1`).
 
 The design requires Rust/Cargo and the sibling `../bitlogic` checkout.
 

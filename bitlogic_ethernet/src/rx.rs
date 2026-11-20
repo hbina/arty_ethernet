@@ -4,8 +4,10 @@
 //! The whole frame body (header + payload, FCS removed) is written to RX RAM at
 //! `{slot, offset}`. Bytes pass through a four-byte delay so the trailing FCS is
 //! never stored. On frame end a valid frame publishes `{truncated, body_len}`
-//! into the slot's metadata entry and advances `wr_ptr`. The consumer owns
-//! `rd_ptr`; the ring is full when `wr_ptr - rd_ptr == 8`.
+//! into the slot's metadata entry and advances `wr_ptr`. The ring has two
+//! consumers, each with its own copy of the RAM and its own pointer: the
+//! protocol unit (`rd_ptr`) and the feed unit (`feed_rd_ptr`). The ring is
+//! full when either consumer is eight frames behind.
 //!
 //! The CRC-32 runs over every data byte including the FCS. A frame is intact
 //! when the register ends at the CRC-32 residue `0xDEBB20E3`; frames that fail
@@ -56,8 +58,9 @@ pub struct RxState {
 pub struct RxIn {
     pub state: RxState,
     pub mii: MiiRx,
-    /// Consumer pointer, registered in the protocol unit.
+    /// Consumer pointers, registered in the protocol and feed units.
     pub rd_ptr: Bits<4>,
+    pub feed_rd_ptr: Bits<4>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
@@ -86,7 +89,8 @@ pub fn rx_step(input: RxIn) -> RxOut {
     let byte = rxd.concat::<4, 8>(s.low_nibble);
 
     // Frame-start bookkeeping (HLS resets the parser on frame_start).
-    let full = s.wr_ptr - input.rd_ptr == bits::<4>(8);
+    let full =
+        s.wr_ptr - input.rd_ptr == bits::<4>(8) || s.wr_ptr - input.feed_rd_ptr == bits::<4>(8);
     let dropping = if start { full } else { s.dropping };
     let drop_count = if start && full {
         s.drop_count + bits::<32>(1)

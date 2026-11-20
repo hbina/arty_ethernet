@@ -32,3 +32,19 @@ pub const IFG_NIBBLES: u64 = 24;
 /// Frame bodies (header + payload) built from the template ROM.
 pub const ARP_FRAME_BODY_LEN: u64 = 42;
 pub const BEACON_FRAME_BODY_LEN: u64 = 185;
+
+/// IEX DEEP market data: multicast group 233.215.21.4, UDP port 10378,
+/// IEX-TP message protocol ID 0x8004 (DEEP v1.0).
+pub const FEED_GROUP_IP: u32 = 0xE9D7_1504;
+pub const FEED_PORT: u16 = 10378;
+pub const DEEP_PROTOCOL_ID: u64 = 0x8004;
+/// Destination of best bid/offer frames (broadcast by default).
+pub const BBO_MAC: u64 = BROADCAST_MAC;
+pub const BBO_ETHERTYPE: u16 = 0x88B6;
+/// Frame offset of the first IEX-TP message block: Ethernet (14) + IPv4
+/// without options (20) + UDP (8) + IEX-TP header (40).
+pub const FEED_PAYLOAD_START: u64 = 82;
+/// Best bid/offer frame: a 40-byte header and up to 46 records of 32 bytes.
+pub const BBO_HEADER_LEN: u64 = 40;
+pub const BBO_RECORD_LEN: u64 = 32;
+pub const BBO_MAX_RECORDS: u64 = 46;

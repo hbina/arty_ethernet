@@ -57,8 +57,6 @@ fn generated_verilog_matches_cycle_model() {
         eprintln!("SKIPPED: BITLOGIC_ETHERNET_SKIP_HDL is set");
         return;
     }
-    let bin = xilinx_bin();
-
     let config = CoreConfig {
         beacon_interval: 6_000,
         garp_interval: 9_000,
@@ -96,7 +94,39 @@ fn generated_verilog_matches_cycle_model() {
         24,
         0x10,
     ));
-    stim.resize(30_000, RxNibble::default());
+    // IEX DEEP segments: inserts, updates and deletes over a few symbols,
+    // interleaved trades and events, back to back at the minimum gap.
+    let mut rng = Rng(0xDEE9);
+    let mut seq = 1;
+    for _ in 0..12 {
+        let msgs: Vec<Vec<u8>> = (0..1 + rng.next() % 6)
+            .flat_map(|_| {
+                let sym = iex::symbol(&format!("H{}", rng.next() % 3));
+                let size = if rng.next().is_multiple_of(3) {
+                    0
+                } else {
+                    1 + rng.next() % 900
+                };
+                let mut m = vec![iex::plu(
+                    rng.next().is_multiple_of(2),
+                    !rng.next().is_multiple_of(4),
+                    sym,
+                    size as u32,
+                    100 + rng.next() % 6,
+                )];
+                if rng.next().is_multiple_of(4) {
+                    m.push(iex::trade(sym, 10, 101));
+                }
+                m
+            })
+            .collect();
+        seq += msgs.len() as u64;
+        stim.extend(mii_frame(
+            &iex::feed_frame(&iex::Segment::new(seq, msgs)),
+            24,
+        ));
+    }
+    stim.resize(36_000, RxNibble::default());
 
     let mut model = EthCore::new(Native, config);
     let expected: Vec<TxNibble> = run(&mut model, &stim);
@@ -105,13 +135,29 @@ fn generated_verilog_matches_cycle_model() {
         "the scenario must fill the peer cache and wrap its insertion slot"
     );
     let frames = decode(&expected);
+    let bbo_frames = frames
+        .iter()
+        .filter(|f| iex::decode_bbo(&f.body, FPGA_MAC, BROADCAST).is_some())
+        .count();
+    assert!(
+        bbo_frames >= 5,
+        "scenario should emit BBO frames; got {bbo_frames}"
+    );
+    assert!(model.book.counters.levels.get() > 3 && model.book.free_sp.get() > 0);
     assert!(
         frames.len() >= 10,
         "scenario should transmit; got {}",
         frames.len()
     );
 
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("xsim_eth_core");
+    compare_with_hdl("xsim_eth_core", &stim, config, &expected);
+}
+
+/// Simulates the generated Verilog on `stim` and checks every TX nibble
+/// against the cycle model's `expected`.
+fn compare_with_hdl(name: &str, stim: &[RxNibble], config: CoreConfig, expected: &[TxNibble]) {
+    let bin = xilinx_bin();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let mut sources = Vec::new();
@@ -121,7 +167,7 @@ fn generated_verilog_matches_cycle_model() {
     }
     fs::write(dir.join("tb.v"), testbench(stim.len(), config)).unwrap();
     sources.push("tb.v".into());
-    fs::write(dir.join("stim.hex"), stim_hex(&stim)).unwrap();
+    fs::write(dir.join("stim.hex"), stim_hex(stim)).unwrap();
 
     let step = |tool: &str, args: &[&str]| run_tool(&bin, &dir, tool, args);
     let mut xvlog = vec!["--nolog"];
@@ -141,4 +187,38 @@ fn generated_verilog_matches_cycle_model() {
             actual[k], expected[k]
         );
     }
+}
+
+/// Real capture segments (the first ones carrying price level updates)
+/// through the generated Verilog: the builders in `iex` are not the only
+/// frames the RTL has to handle.
+#[test]
+fn generated_verilog_handles_capture_segments() {
+    if std::env::var_os("BITLOGIC_ETHERNET_SKIP_HDL").is_some() {
+        eprintln!("SKIPPED: BITLOGIC_ETHERNET_SKIP_HDL is set");
+        return;
+    }
+    let Some(path) = iex::sample_pcap() else {
+        eprintln!("SKIPPED: iex_data_broadcast.pcap not found");
+        return;
+    };
+    let config = CoreConfig::default();
+    let frames: Vec<Vec<u8>> = iex::read_pcap(&path)
+        .into_iter()
+        .filter(|f| iex::frame_plus(f).is_some_and(|p| !p.is_empty()))
+        .take(30)
+        .collect();
+    let mut stim: Vec<RxNibble> = Vec::new();
+    for f in &frames {
+        stim.extend(mii_frame(f, 24));
+    }
+    stim.resize(stim.len() + 20_000, RxNibble::default());
+    let mut model = EthCore::new(Native, config);
+    let expected: Vec<TxNibble> = run(&mut model, &stim);
+    let bbo_frames = decode(&expected)
+        .iter()
+        .filter(|f| iex::decode_bbo(&f.body, FPGA_MAC, BROADCAST).is_some())
+        .count();
+    assert!(bbo_frames > 0, "the model should emit BBO frames");
+    compare_with_hdl("xsim_eth_core_capture", &stim, config, &expected);
 }

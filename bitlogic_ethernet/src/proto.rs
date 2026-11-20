@@ -25,8 +25,8 @@
 //! the *next* state, so during each cycle the read data always corresponds to
 //! the current state's `index` and pointers.
 use crate::ops::{
-    bump32, byte_of32, byte_of48, checksum_update, fold16, hex_digit, nibble_of32, shift_in16,
-    shift_in32, shift_in48, within, word_part,
+    bump32, byte_of32, byte_of32_le, byte_of48, byte_of64_le, checksum_update, fold16, hex_digit,
+    nibble_of32, shift_in16, shift_in32, shift_in48, within, word_part,
 };
 use bitlogic::{Bits, LogicValue, bits, logic};
 
@@ -38,10 +38,13 @@ pub enum Phase {
     Parse,
     Prep,
     Copy,
+    /// Write a best bid/offer frame from the BBO FIFO into a TX slot.
+    Bbo,
 }
 
 /// Beacon frame body length (`consts::BEACON_FRAME_BODY_LEN`).
 const BEACON_LEN: Bits<11> = bits(crate::consts::BEACON_FRAME_BODY_LEN);
+const BBO_HEADER: Bits<11> = bits(crate::consts::BBO_HEADER_LEN);
 
 // ARP peer cache: sender IPv4 address to MAC address.
 bitlogic::fixed_map!(pub mod peer_cache: Bits<32> => Bits<48>, capacity = 16);
@@ -57,6 +60,26 @@ pub struct ProtoConfig {
     pub ip: Bits<32>,
     pub beacon_interval: Bits<32>,
     pub garp_interval: Bits<32>,
+    /// IEX feed: multicast group and UDP port (see `feed.rs`).
+    pub feed_ip: Bits<32>,
+    pub feed_port: Bits<16>,
+    /// Destination MAC of best bid/offer frames.
+    pub bbo_mac: Bits<48>,
+}
+
+/// Header values of the best bid/offer frame being written, captured when
+/// it starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
+pub struct BboFrame {
+    /// Records in this frame (1..=46).
+    pub count: Bits<6>,
+    /// Sequence number of the first record: records sent before it.
+    pub first: Bits<32>,
+    pub feed_packets: Bits<32>,
+    pub feed_gaps: Bits<32>,
+    pub feed_malformed: Bits<32>,
+    pub book_errors: Bits<32>,
+    pub rx_queue_drops: Bits<32>,
 }
 
 /// Fields captured from the RX frame being parsed. ARP and IPv4 fields are
@@ -147,6 +170,10 @@ pub struct ProtoState {
     pub request: Request,
     pub counters: Counters,
     pub peers: PeerCache,
+    /// Consumer side of the BBO FIFO, and BBO records sent.
+    pub bbo_rd_ptr: Bits<9>,
+    pub bbo_sent: Bits<32>,
+    pub bbo: BboFrame,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
@@ -163,6 +190,15 @@ pub struct ProtoIn {
     /// Template ROM entry at `{request.arp, index}`.
     pub rom_rdata: Bits<9>,
     pub tx_rd_ptr: Bits<3>,
+    /// Producer side of the BBO FIFO (the book unit).
+    pub bbo_wr_ptr: Bits<9>,
+    /// BBO FIFO word at `bbo_raddr` of the previous state.
+    pub bbo_rdata: Bits<64>,
+    /// Feed and book counters reported in BBO frame headers.
+    pub feed_packets: Bits<32>,
+    pub feed_gaps: Bits<32>,
+    pub feed_malformed: Bits<32>,
+    pub book_errors: Bits<32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
@@ -177,6 +213,7 @@ pub struct ProtoOut {
     pub tx_meta_we: bool,
     pub tx_meta_waddr: Bits<2>,
     pub tx_meta_wdata: Bits<11>,
+    pub bbo_raddr: Bits<10>,
 }
 
 /// `parsing && lo <= i < hi`: the current byte belongs to a field.
@@ -257,6 +294,51 @@ pub fn template_byte(rom: Bits<9>, r: Request) -> Bits<8> {
     }
 }
 
+/// BBO FIFO word holding frame byte `index` (40 and up) of the frame whose
+/// first record is at `rd_ptr`: record `(index - 40) / 32`, word
+/// `(index - 40) / 8 % 4`.
+#[logic]
+fn bbo_raddr(index: Bits<11>, rd_ptr: Bits<9>) -> Bits<10> {
+    let j = index - BBO_HEADER;
+    let record = rd_ptr + bits::<3>(0).concat::<6, 9>(j.slice::<6>(5));
+    record.slice::<8>(0).concat::<2, 10>(j.slice::<2>(3))
+}
+
+/// Byte `index` of a best bid/offer frame (layout in `README.md`): header
+/// fields from the captured values, records from the BBO FIFO word.
+#[logic]
+pub fn bbo_byte(index: Bits<11>, f: BboFrame, c: ProtoConfig, word: Bits<64>) -> Bits<8> {
+    let low4 = index.slice::<4>(0);
+    let le = index.slice::<2>(0);
+    if index < bits::<11>(6) {
+        byte_of48(c.bbo_mac, low4)
+    } else if index < bits::<11>(12) {
+        byte_of48(c.mac, (index - bits::<11>(6)).slice::<4>(0))
+    } else if index == bits::<11>(12) {
+        bits::<8>(0x88)
+    } else if index == bits::<11>(13) {
+        bits::<8>(0xB6)
+    } else if index == bits::<11>(14) {
+        bits::<8>(1)
+    } else if index == bits::<11>(15) {
+        bits::<2>(0).concat::<6, 8>(f.count)
+    } else if index < bits::<11>(20) {
+        byte_of32_le(f.first, le)
+    } else if index < bits::<11>(24) {
+        byte_of32_le(f.feed_packets, le)
+    } else if index < bits::<11>(28) {
+        byte_of32_le(f.feed_gaps, le)
+    } else if index < bits::<11>(32) {
+        byte_of32_le(f.feed_malformed, le)
+    } else if index < bits::<11>(36) {
+        byte_of32_le(f.book_errors, le)
+    } else if index < bits::<11>(40) {
+        byte_of32_le(f.rx_queue_drops, le)
+    } else {
+        byte_of64_le(word, index.slice::<3>(0))
+    }
+}
+
 #[logic]
 pub fn proto_step(input: ProtoIn) -> ProtoOut {
     let s = input.state;
@@ -270,6 +352,7 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     let parsing = s.phase == Phase::Parse;
     let preparing = s.phase == Phase::Prep;
     let copying = s.phase == Phase::Copy;
+    let bbo_writing = s.phase == Phase::Bbo;
 
     // Free-running interval timers. A tick stays pending until IDLE serves it.
     let beacon_tick = s.beacon_timer == c.beacon_interval - bits::<32>(1);
@@ -284,6 +367,9 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     let pop = idle && rx_ready;
     let want_garp = idle && !rx_ready && garp_due;
     let want_beacon = idle && !rx_ready && !garp_due && beacon_due;
+    // Best bid/offer records wait in their FIFO until the TX ring has room.
+    let bbo_avail = input.bbo_wr_ptr - s.bbo_rd_ptr;
+    let want_bbo = idle && !rx_ready && !garp_due && !beacon_due && bbo_avail != bits::<9>(0);
 
     // PARSE: shift each byte into the fields that cover its offset.
     let b = input.rx_rdata;
@@ -418,7 +504,17 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     } else {
         bits::<11>(42)
     };
-    let parse_done = parsing && i == parse_end;
+    // IPv4 frames other than ICMP need no more than the first 42 bytes
+    // (the IEX feed is read by the feed unit from its own RX copy).
+    let ipv4_other =
+        p.ethertype == bits::<16>(0x0800) && p.ip_ttl_proto.slice::<8>(0) != bits::<8>(1);
+    let parse_done = parsing && (i == parse_end || (i == bits::<11>(42) && ipv4_other));
+    // UDP to the feed group and port (bytes 36..=37 are captured as the
+    // ICMP checksum field).
+    let feed_frame = p.ethertype == bits::<16>(0x0800)
+        && p.ip_ttl_proto.slice::<8>(0) == bits::<8>(17)
+        && p.ip_dst == c.feed_ip
+        && p.icmp_checksum == c.feed_port;
     let dest_ok = p.dst_mac == c.mac || p.dst_mac == bits::<48>(0xffff_ffff_ffff);
     // A well-formed Ethernet/IPv4 ARP request or reply.
     let arp_valid = !truncated
@@ -460,6 +556,14 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     let start_tx = want_tx && !tx_full;
     let tx_dropped = want_tx && tx_full;
     let start_echo = want_echo && !tx_full;
+    let start_bbo = want_bbo && !tx_full;
+    let bbo_count = if bbo_avail > bits::<9>(46) {
+        bits::<6>(46)
+    } else {
+        bbo_avail.slice::<6>(0)
+    };
+    let bbo_len = BBO_HEADER + (bits::<5>(0).concat::<6, 11>(s.bbo.count) << 5);
+    let bbo_last = bbo_writing && i == bbo_len - bits::<11>(1);
 
     let snapshot = Snapshot {
         rx_packets: n.rx_packets,
@@ -538,6 +642,8 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
                 Phase::Parse
             } else if start_tx {
                 Phase::Prep
+            } else if start_bbo {
+                Phase::Bbo
             } else {
                 Phase::Idle
             }
@@ -567,8 +673,15 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
                 Phase::Copy
             }
         }
+        Phase::Bbo => {
+            if bbo_last {
+                Phase::Idle
+            } else {
+                Phase::Bbo
+            }
+        }
     };
-    let next_index = if idle || parse_done || prep_last || copy_last {
+    let next_index = if idle || parse_done || prep_last || copy_last || bbo_last {
         bits::<11>(0)
     } else {
         i + bits::<11>(1)
@@ -580,7 +693,7 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
     } else {
         s.rx_rd_ptr
     };
-    let publish_tx = prep_last || copy_last;
+    let publish_tx = prep_last || copy_last || bbo_last;
     let next_tx_wr_ptr = if publish_tx {
         s.tx_wr_ptr + bits::<3>(1)
     } else {
@@ -591,7 +704,7 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
         rx_packets: bump32(n.rx_packets, pop),
         rx_proto_drops: bump32(
             n.rx_proto_drops,
-            parse_done && !arp_learns && !arp_ok && !echo_ok,
+            parse_done && !arp_learns && !arp_ok && !echo_ok && !feed_frame,
         ),
         tx_drops: bump32(n.tx_drops, tx_dropped),
         arp_replies: bump32(n.arp_replies, want_reply),
@@ -629,6 +742,29 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
             p.sender_ip,
             p.sender_mac,
         ),
+        bbo_rd_ptr: if bbo_last {
+            s.bbo_rd_ptr + bits::<3>(0).concat::<6, 9>(s.bbo.count)
+        } else {
+            s.bbo_rd_ptr
+        },
+        bbo_sent: if bbo_last {
+            s.bbo_sent + bits::<26>(0).concat::<6, 32>(s.bbo.count)
+        } else {
+            s.bbo_sent
+        },
+        bbo: if start_bbo {
+            BboFrame {
+                count: bbo_count,
+                first: s.bbo_sent,
+                feed_packets: input.feed_packets,
+                feed_gaps: input.feed_gaps,
+                feed_malformed: input.feed_malformed,
+                book_errors: input.book_errors,
+                rx_queue_drops: input.rx_queue_drops,
+            }
+        } else {
+            s.bbo
+        },
     };
     let arp_bit = if next.request.arp {
         bits::<1>(1)
@@ -641,15 +777,24 @@ pub fn proto_step(input: ProtoIn) -> ProtoOut {
         rx_raddr: next.rx_rd_ptr.slice::<3>(0).concat::<11, 14>(next.index),
         rx_meta_raddr: next.rx_rd_ptr.slice::<3>(0),
         rom_addr: arp_bit.concat::<8, 9>(next.index.slice::<8>(0)),
-        tx_we: preparing || copying,
+        tx_we: preparing || copying || bbo_writing,
         tx_waddr: s.tx_wr_ptr.slice::<2>(0).concat::<11, 13>(i),
         tx_wdata: if copying {
             echo_reply_byte(i, b, r, c.mac, c.ip)
+        } else if bbo_writing {
+            bbo_byte(i, s.bbo, c, input.bbo_rdata)
         } else {
             template_byte(input.rom_rdata, r)
         },
         tx_meta_we: publish_tx,
         tx_meta_waddr: s.tx_wr_ptr.slice::<2>(0),
-        tx_meta_wdata: if copying { r.len } else { prep_len },
+        tx_meta_wdata: if copying {
+            r.len
+        } else if bbo_writing {
+            bbo_len
+        } else {
+            prep_len
+        },
+        bbo_raddr: bbo_raddr(next.index, next.bbo_rd_ptr),
     }
 }

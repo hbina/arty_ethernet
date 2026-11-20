@@ -170,3 +170,48 @@ pub fn word_part(byte: Bits<8>, index: Bits<11>) -> Bits<32> {
 pub fn checksum_update(hc: Bits<16>, old: Bits<16>, new: Bits<16>) -> Bits<16> {
     !ones_add(ones_add(!hc, !old), new)
 }
+
+/// Shift `byte` into the high end of a little-endian field when `enable` is
+/// set: after N bytes the first byte received is the least significant.
+#[logic]
+pub fn shift_in_le16(field: Bits<16>, byte: Bits<8>, enable: bool) -> Bits<16> {
+    if enable {
+        byte.concat::<8, 16>(field.slice::<8>(8))
+    } else {
+        field
+    }
+}
+
+#[logic]
+pub fn shift_in_le32(field: Bits<32>, byte: Bits<8>, enable: bool) -> Bits<32> {
+    if enable {
+        byte.concat::<24, 32>(field.slice::<24>(8))
+    } else {
+        field
+    }
+}
+
+#[logic]
+pub fn shift_in_le64(field: Bits<64>, byte: Bits<8>, enable: bool) -> Bits<64> {
+    if enable {
+        byte.concat::<56, 64>(field.slice::<56>(8))
+    } else {
+        field
+    }
+}
+
+/// Byte `index` of a 64-bit word, least significant byte first.
+#[logic]
+pub fn byte_of64_le(word: Bits<64>, index: Bits<3>) -> Bits<8> {
+    [
+        word.slice::<8>(0),
+        word.slice::<8>(8),
+        word.slice::<8>(16),
+        word.slice::<8>(24),
+        word.slice::<8>(32),
+        word.slice::<8>(40),
+        word.slice::<8>(48),
+        word.slice::<8>(56),
+    ]
+    .at(index)
+}

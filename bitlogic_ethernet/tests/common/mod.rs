@@ -3,6 +3,8 @@
 //! nibble encoding and a TX stream decoder.
 #![allow(dead_code)]
 
+pub mod iex;
+
 use bitlogic_ethernet::sim::{EthCore, RxNibble, Steps, TxNibble};
 use std::{
     path::{Path, PathBuf},

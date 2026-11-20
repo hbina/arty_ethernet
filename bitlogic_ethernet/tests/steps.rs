@@ -4,7 +4,7 @@
 mod common;
 
 use bitlogic::{Bits, Logic, LogicValue, Schema, bits};
-use bitlogic_ethernet::{proto, rx, status, tx, zero};
+use bitlogic_ethernet::{book, feed, proto, rx, status, tx, zero};
 use common::Rng;
 use std::fmt::Debug;
 
@@ -56,6 +56,30 @@ fn proto_native_matches_ir() {
         2,
         20_000,
     );
+}
+
+#[test]
+fn feed_native_matches_ir() {
+    agree(feed::feed_step::ir().unwrap(), feed::feed_step, 5, 20_000);
+}
+
+#[test]
+fn book_native_matches_ir() {
+    agree(book::book_step::ir().unwrap(), book::book_step, 6, 20_000);
+}
+
+#[test]
+fn symbol_hash_matches_its_definition() {
+    let mut rng = Rng(7);
+    let ir = book::symbol_hash::ir().unwrap();
+    for _ in 0..10_000 {
+        let s = rng.next();
+        let x = s ^ (s >> 29) ^ (s >> 17) ^ (s << 7);
+        let want = (0..6).fold(0, |h, k| h ^ ((x >> (11 * k)) & 0x7ff));
+        assert_eq!(book::symbol_hash(bits(s)).get(), want);
+        let interpreted: Bits<11> = ir.evaluate_typed(bits::<64>(s)).unwrap();
+        assert_eq!(interpreted.get(), want);
+    }
 }
 
 #[test]

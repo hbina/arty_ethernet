@@ -54,6 +54,9 @@ pub struct CoreConfig {
     pub ip: u32,
     pub beacon_interval: u32,
     pub garp_interval: u32,
+    pub feed_ip: u32,
+    pub feed_port: u16,
+    pub bbo_mac: u64,
 }
 
 impl Default for CoreConfig {
@@ -63,6 +66,9 @@ impl Default for CoreConfig {
             ip: FPGA_IP,
             beacon_interval: BEACON_INTERVAL_CYCLES,
             garp_interval: GRATUITOUS_ARP_INTERVAL_CYCLES,
+            feed_ip: FEED_GROUP_IP,
+            feed_port: FEED_PORT,
+            bbo_mac: BBO_MAC,
         }
     }
 }
@@ -74,6 +80,9 @@ impl From<CoreConfig> for ProtoConfig {
             ip: bits(c.ip.into()),
             beacon_interval: bits(c.beacon_interval.into()),
             garp_interval: bits(c.garp_interval.into()),
+            feed_ip: bits(c.feed_ip.into()),
+            feed_port: bits(c.feed_port.into()),
+            bbo_mac: bits(c.bbo_mac),
         }
     }
 }
