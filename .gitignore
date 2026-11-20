@@ -55,4 +55,5 @@ AGENTS.md
 GEMINI.md
 CLAUDE.md
 
-.antigravitycli
+# Rust
+target/

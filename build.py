@@ -28,8 +28,8 @@ def parser():
 
     command("hls", "run HLS C simulations, synthesis, and IP export")
     build = command("build", "build the main Ethernet bitstream (includes HLS)")
-    build.add_argument("--design", choices=("hls", "rtl"), default="hls",
-                       help="use the main HLS design or legacy RTL LED design")
+    build.add_argument("--design", choices=("hls", "rtl", "bitlogic"), default="hls",
+                       help="use the main HLS design, the bitlogic design, or the legacy RTL LED design")
     build.add_argument("--skip-hls", action="store_true", help="reuse existing generated HLS RTL")
     command("hw-server", "start the JTAG hardware server in the foreground")
     command("probe", "inspect the JTAG chain using Vivado")
@@ -60,7 +60,7 @@ def main(argv=None):
             cli.error("--program requires --hardware")
         if args.no_build and not args.program:
             cli.error("--no-build requires --program")
-    if args.command == "build" and args.design == "rtl" and args.skip_hls:
+    if args.command == "build" and args.design != "hls" and args.skip_hls:
         cli.error("--skip-hls applies only to --design hls")
     if not 1 <= args.hw_port <= 65535:
         cli.error("--hw-port must be between 1 and 65535")
@@ -91,6 +91,11 @@ def main(argv=None):
         elif args.command == "build":
             if args.design == "rtl":
                 vivado("scripts/build_bitstream.tcl")
+            elif args.design == "bitlogic":
+                run("cargo", "run", "--quiet", "--release", "--locked",
+                    "--manifest-path", "bitlogic_ethernet/Cargo.toml",
+                    "--bin", "generate", "--", "bitlogic_ethernet/build/rtl")
+                vivado("bitlogic_ethernet/scripts/build_bitstream.tcl")
             else:
                 if not args.skip_hls:
                     hls()
@@ -137,7 +142,7 @@ def main(argv=None):
         elif args.command == "vpp-version":
             run(tool("Vitis", "v++"), "--version")
         elif args.command == "clean":
-            paths = [ROOT / name for name in (".Xil", "build", "hls_ethernet/build")]
+            paths = [ROOT / name for name in (".Xil", "build", "hls_ethernet/build", "bitlogic_ethernet/build")]
             paths += sorted({path for pattern in ("vivado*.jou", "vivado*.log", "vivado_pid*.str")
                              for path in ROOT.glob(pattern)})
             for path in paths:
