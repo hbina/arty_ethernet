@@ -3,7 +3,7 @@
 //! status block.
 mod common;
 
-use bitlogic::{Bits, Logic, LogicValue, Schema, bits};
+use bitlogic::{BitVec, Bits, Logic, LogicValue, Schema, bits};
 use bitlogic_ethernet::{book, feed, proto, rx, status, tx, zero};
 use common::Rng;
 use std::fmt::Debug;
@@ -16,7 +16,7 @@ fn random<T: LogicValue>(rng: &mut Rng) -> T {
 
 /// Random valid leaves: enums take only their declared encodings, and an enum
 /// with fields fills only the chosen variant's fields (the others are zero).
-fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<u64>) {
+fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<BitVec>) {
     match schema {
         Schema::Struct { fields, .. } => {
             for (_, field) in fields {
@@ -29,14 +29,16 @@ fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<u64>) {
             }
         }
         Schema::Enum { variants, .. } => {
-            out.push(variants[(rng.next() % variants.len() as u64) as usize].1);
+            out.push(BitVec::from(
+                variants[(rng.next() % variants.len() as u64) as usize].1,
+            ));
         }
         Schema::Tagged { tag, payloads, .. } => {
             let Schema::Enum { variants, .. } = &**tag else {
                 unreachable!("a tag is an enum");
             };
             let chosen = (rng.next() % variants.len() as u64) as usize;
-            out.push(variants[chosen].1);
+            out.push(BitVec::from(variants[chosen].1));
             for (i, (_, fields)) in payloads.iter().enumerate() {
                 for (_, field) in fields {
                     if i == chosen {
@@ -50,12 +52,16 @@ fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<u64>) {
         leaf => {
             let width = leaf.width().unwrap();
             // Bias toward small values so equality guards are exercised.
-            let raw = if rng.next().is_multiple_of(4) {
-                rng.next() % 4
-            } else {
-                rng.next()
-            };
-            out.push(raw & (u64::MAX >> (64 - width)));
+            let words: Vec<u64> = (0..usize::from(width).div_ceil(64))
+                .map(|i| {
+                    if rng.next().is_multiple_of(4) {
+                        if i == 0 { rng.next() % 4 } else { 0 }
+                    } else {
+                        rng.next()
+                    }
+                })
+                .collect();
+            out.push(BitVec::from_words(&words).masked(width));
         }
     }
 }
