@@ -325,45 +325,47 @@ sample capture has 22.
 
 ## Implementation results
 
-Vivado 2025.2, `xc7a100ticsg324-1L`, measured 2026-11-20 with the IEX feed
-handler (rebuilt 2026-11-21 with the TX FIFO):
+Vivado 2025.2, `xc7a100ticsg324-1L`. The current build (2026-11-21) uses
+bitlogic's tagged-union layout for the book's phase enum; the previous build
+(2026-11-21, TX FIFO, book before its phase enum) and the design before the
+feed handler (2026-11-19) are kept for comparison:
 
-| Metric | With IEX feed handler | Without (2026-11-19) |
-|---|---|---|
-| Slice LUTs | 2,882 (4.5%) | 1,395 |
-| Slice registers | 3,399 (2.7%) | 2,047 |
-| Block RAM tiles | 51.5 of 135 (38.1%): 49 RAMB36 + 5 RAMB18 | 6.5 |
-| Setup WNS / hold WHS | +5.128 ns / +0.033 ns, 0 failing endpoints | +4.799 ns / +0.114 ns |
-| `eth_tx_clk` (40 ns) MII output setup | +20.6 ns, from IOB registers | not constrained |
-| `eth_rx_clk` (40 ns) worst setup | +10.105 ns, an `eth_rxd` input path under the XDC's 30 ns input delay | +26.521 ns |
-| `eth_rx_clk` worst register-to-register path | 18.557 ns, slack +20.681 ns: `eth_rst` fanout to the book state (97% routing). Before the TX FIFO it was 16.868 ns: `node_price` BRAM output, 64-bit price compare, next-node select, `node_size` read address (13 levels) | — |
+| Metric | Current | Previous | Without feed handler |
+|---|---|---|---|
+| Slice LUTs | 2,909 (4.6%) | 2,882 | 1,395 |
+| Slice registers | 3,349 (2.6%) | 3,399 | 2,047 |
+| Block RAM tiles | 51.5 of 135 (38.1%): 49 RAMB36 + 5 RAMB18 | same | 6.5 |
+| Setup WNS / hold WHS | +5.013 ns / +0.023 ns, 0 failing endpoints | +5.128 ns / +0.033 ns | +4.799 ns / +0.114 ns |
+| `eth_tx_clk` (40 ns) MII output setup | +20.6 ns, from IOB registers | +20.6 ns | not constrained |
+| `eth_rx_clk` (40 ns) worst setup | +10.206 ns, an `eth_rxd` input path under the XDC's 30 ns input delay | +10.105 ns | +26.521 ns |
+| `eth_rx_clk` worst register-to-register path | 16.439 ns, slack +22.916 ns: `node_price` BRAM output to a `node_price` read address (15 levels, 70% routing) | 18.557 ns: `eth_rst` fanout to the book state | — |
 
-These figures predate the 2026-11-21 move of the book's per-phase data into
-its phase enum, and the full build has not been rerun since. Out-of-context
-synthesis of `book_unit` alone (Vivado 2025.2, same part, generated with the
-same bitlogic revision for both) gives 812 LUTs / 650 registers before and
-1,023 LUTs / 763 registers after. At that point variant fields did not share
-storage: the bid level was held in both `AskRead` and `Emit` (+96 bits) and
-`Link` had its own `after` (+13), so the state grew from 651 to 760 bits. The
-extra LUTs mostly cleared a phase's fields when the phase ended. Estimated
-setup slack at 40 ns is +33.4 ns before and +33.2 ns after, without BRAM or
-routing.
+The previous column predates the 2026-11-21 move of the book's per-phase
+data into its phase enum. With one leaf per variant field, that move grew the
+book's state from 651 to 760 bits: the bid level was held in both `AskRead`
+and `Emit` (+96 bits) and `Link` had its own `after` (+13). bitlogic's
+tagged-union layout then shares the variants' storage: the phase is a 4-bit
+tag plus a 194-bit payload, and the state is 600 bits. Synthesis of the whole
+design with hierarchy kept (Vivado 2025.2, `synth_design` only, same part,
+same bitlogic revision) gives `book_unit`:
 
-bitlogic's tagged-union layout for enums with fields (2026-11-21) then shares
-the variants' storage: the phase is a 4-bit tag plus a 194-bit payload instead
-of 354 bits of per-variant fields. Synthesis of the whole design with
-hierarchy kept (Vivado 2025.2, `synth_design` only, same part) gives
-`book_unit` 1,008 LUTs / 631 registers before and 895 LUTs / 472 registers
-after, and the whole design 4,724 / 3,659 before and 4,415 / 3,500 after
-(`proto_unit` drops from 2,426 to 2,229 LUTs through the same release's IR
-folds). The full build, and with it the table above, has not been rerun.
+| Book version | State bits | LUTs | Registers |
+|---|---|---|---|
+| Before the phase enum | 651 | 882 | 522 |
+| Phase enum, one leaf per variant field | 760 | 1,008 | 631 |
+| Phase enum, tagged union (current) | 600 | 895 | 472 |
+
+The book before its phase enum synthesizes to the same 882 / 522 with the
+earlier bitlogic, so the difference is the book's design, not the compiler.
+The routed build shows the same trend: 27 more LUTs and 50 fewer registers
+than the previous build.
 
 The register-to-register figures come from `build/ethernet/internal_paths.rpt`,
 written by every build (`scripts/post_route.tcl`). The build also writes the routed checkpoint
 `build/ethernet/routed.dcp`; `python3 projects/ethernet/scripts/floorplan.py` (from the repository root)
 turns it into `build/ethernet/floorplan.html`: a block diagram of the board and the
-placed design on the die, colored by module, with I/O banks and pins. The deepest logic is the list walk's one-node-per-cycle loop, which limited
-the core to about 59 MHz in the 2026-11-20 build.
+placed design on the die, colored by module, with I/O banks and pins. The deepest logic is the list walk's one-node-per-cycle loop: 16.4 ns in the
+current build, so the core would close at about 60 MHz.
 
 Before the feed handler:
 
@@ -414,7 +416,10 @@ compares every BBO record with a reference book computed by
 | topspeed (84.3 Mb/s of frames, the full 100 Mb/s wire) | 99,231 | all match | same | none |
 
 The `tests/hw` suite (16 tests, including ICMP echo up to 1472 bytes) also
-passes. Before the TX FIFO, the same replays lost about 3.8% of records to
+passes. The current build (tagged-union book) repeated the whole run on
+2026-11-21 with identical results: the same frame counts, every record
+matching, all board counters zero, no host NIC errors, and no loss on 5,000
+flood pings of 1472 bytes. Before the TX FIFO, the same replays lost about 3.8% of records to
 corrupted TX frames (see the timing notes above) while the board's own
 counters stayed at zero. `tcpreplay` rates count frame bytes only: at the
 capture's 125-byte average, adding FCS, preamble and the minimum gap (24
