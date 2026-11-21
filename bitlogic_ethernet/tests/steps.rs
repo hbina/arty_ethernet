@@ -8,14 +8,9 @@ use bitlogic_ethernet::{book, feed, proto, rx, status, tx, zero};
 use common::Rng;
 use std::fmt::Debug;
 
-fn random<T: LogicValue>(rng: &mut Rng) -> T {
-    let mut values = Vec::new();
-    random_leaves(&T::schema(), rng, &mut values);
-    T::from_values(&values).unwrap()
-}
-
 /// Random valid leaves: enums take only their declared encodings, and an enum
-/// with fields fills only the chosen variant's fields (the others are zero).
+/// with fields packs the chosen variant's fields into its payload, with
+/// random bits above them (don't-care: the IR must ignore them).
 fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<BitVec>) {
     match schema {
         Schema::Struct { fields, .. } => {
@@ -38,15 +33,21 @@ fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<BitVec>) {
                 unreachable!("a tag is an enum");
             };
             let chosen = (rng.next() % variants.len() as u64) as usize;
-            out.push(BitVec::from(variants[chosen].1));
-            for (i, (_, fields)) in payloads.iter().enumerate() {
-                for (_, field) in fields {
-                    if i == chosen {
-                        random_leaves(field, rng, out);
-                    } else {
-                        out.extend(field.zero_values());
-                    }
-                }
+            let mut fields = Vec::new();
+            for (_, field) in &payloads[chosen].1 {
+                random_leaves(field, rng, &mut fields);
+            }
+            let leaves = schema.encode_variant(&variants[chosen].0, &fields).unwrap();
+            let masks = schema.valid_bits(&leaves).unwrap();
+            for ((value, mask), (_, leaf)) in leaves.iter().zip(&masks).zip(schema.leaves()) {
+                let words: Vec<u64> = (0..usize::from(leaf.width().unwrap()).div_ceil(64))
+                    .map(|i| {
+                        let v = value.words().get(i).copied().unwrap_or(0);
+                        let m = mask.words().get(i).copied().unwrap_or(0);
+                        v | (rng.next() & !m)
+                    })
+                    .collect();
+                out.push(BitVec::from_words(&words).masked(leaf.width().unwrap()));
             }
         }
         leaf => {
@@ -73,8 +74,11 @@ where
 {
     let mut rng = Rng(seed);
     for _ in 0..cases {
-        let input: I = random(&mut rng);
-        let interpreted: O = ir.evaluate_typed(input).unwrap();
+        // Raw leaves, so don't-care payload bits reach the IR as generated.
+        let mut leaves = Vec::new();
+        random_leaves(&I::schema(), &mut rng, &mut leaves);
+        let input = I::from_values(&leaves).unwrap();
+        let interpreted = O::from_values(&ir.evaluate(&leaves).unwrap()).unwrap();
         assert_eq!(native(input), interpreted, "input {input:?}");
     }
 }

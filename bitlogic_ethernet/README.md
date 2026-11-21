@@ -250,7 +250,9 @@ nodes, pool exhausted) drop the PLU and count in `errors`. The phase is an
 enum with fields (2026-11-21): data that only one phase uses travels in its
 variant (`Probe { probes }`, `Walk(Cursor)`, `Link { after, node }`,
 `AskRead { bid }`, `Emit { bid, ask, word }`), so it cannot be read in the
-wrong phase and is zero outside it.
+wrong phase. bitlogic stores the enum as a tagged union: the variants share
+one 194-bit payload (the size of `Emit`), and `bid`, the first field of both
+`AskRead` and `Emit`, sits at the same bits in both.
 
 **BBO frames.** The protocol unit drains the BBO FIFO when it is otherwise
 idle and the TX ring has room, up to 46 records per frame, so records batch
@@ -336,12 +338,21 @@ These figures predate the 2026-11-21 move of the book's per-phase data into
 its phase enum, and the full build has not been rerun since. Out-of-context
 synthesis of `book_unit` alone (Vivado 2025.2, same part, generated with the
 same bitlogic revision for both) gives 812 LUTs / 650 registers before and
-1,023 LUTs / 763 registers after. Variant fields do not share storage: the
-bid level is held in both `AskRead` and `Emit` (+96 bits) and `Link` has its
-own `after` (+13), so the state grows from 651 to 760 bits. The extra LUTs
-mostly clear a phase's fields when the phase ends. Estimated
+1,023 LUTs / 763 registers after. At that point variant fields did not share
+storage: the bid level was held in both `AskRead` and `Emit` (+96 bits) and
+`Link` had its own `after` (+13), so the state grew from 651 to 760 bits. The
+extra LUTs mostly cleared a phase's fields when the phase ended. Estimated
 setup slack at 40 ns is +33.4 ns before and +33.2 ns after, without BRAM or
 routing.
+
+bitlogic's tagged-union layout for enums with fields (2026-11-21) then shares
+the variants' storage: the phase is a 4-bit tag plus a 194-bit payload instead
+of 354 bits of per-variant fields. Synthesis of the whole design with
+hierarchy kept (Vivado 2025.2, `synth_design` only, same part) gives
+`book_unit` 1,008 LUTs / 631 registers before and 895 LUTs / 472 registers
+after, and the whole design 4,724 / 3,659 before and 4,415 / 3,500 after
+(`proto_unit` drops from 2,426 to 2,229 LUTs through the same release's IR
+folds). The full build, and with it the table above, has not been rerun.
 
 The register-to-register figures come from `build/internal_paths.rpt`,
 written by every build. The build also writes the routed checkpoint
