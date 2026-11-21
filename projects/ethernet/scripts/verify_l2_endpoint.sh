@@ -3,7 +3,7 @@ set -euo pipefail
 
 IFACE="${1:-eno1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 FPGA_MAC="${FPGA_MAC:-02:00:00:00:00:01}"
 CAPTURE_SECONDS="${CAPTURE_SECONDS:-8}"
 OUT_DIR="${OUT_DIR:-logs/l2_verify}"

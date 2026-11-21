@@ -6,7 +6,7 @@
 //! [`core`] declares how the Ethernet units, RAMs and template ROM connect with
 //! `bitlogic::system!`, which generates both the Rust cycle model and the
 //! `eth_core` Verilog. Clocks, resets and clock-domain crossings stay in the
-//! handwritten `rtl/arty_top.v`. See `README.md` in this directory for the
+//! handwritten `rtl/arty_top.v`. See `DESIGN.md` for the
 //! block diagram.
 //!
 //! Domains:

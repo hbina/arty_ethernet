@@ -304,7 +304,7 @@ fn bbo_raddr(index: Bits<11>, rd_ptr: Bits<9>) -> Bits<10> {
     record.slice::<8>(0).concat::<2, 10>(j.slice::<2>(3))
 }
 
-/// Byte `index` of a best bid/offer frame (layout in `README.md`): header
+/// Byte `index` of a best bid/offer frame (layout in `DESIGN.md`): header
 /// fields from the captured values, records from the BBO FIFO word.
 #[logic]
 pub fn bbo_byte(index: Bits<11>, f: BboFrame, c: ProtoConfig, word: Bits<64>) -> Bits<8> {

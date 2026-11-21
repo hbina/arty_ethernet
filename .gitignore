@@ -41,7 +41,7 @@ csim.exe
 *.dcp
 
 # Local packet capture
-/iex_data_broadcast.pcap
+/projects/ethernet/iex_data_broadcast.pcap
 
 # Local editor/OS files
 /.antigravitycli/

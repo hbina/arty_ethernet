@@ -147,7 +147,7 @@ pub fn read_pcap(path: &std::path::Path) -> Vec<Vec<u8>> {
 
 /// The sample capture at the repository root, if present.
 pub fn sample_pcap() -> Option<std::path::PathBuf> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../iex_data_broadcast.pcap");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("iex_data_broadcast.pcap");
     path.is_file().then_some(path)
 }
 

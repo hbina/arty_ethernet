@@ -7,8 +7,8 @@ tcpreplay, collects the board's best bid/offer (BBO) frames until they stop,
 and compares every record with a reference order book computed here from
 the same capture. Needs root (raw sockets, tcpreplay).
 
-    sudo .venv/bin/python scripts/iex_board_replay.py --iface eno1 --mbps 20
-    sudo .venv/bin/python scripts/iex_board_replay.py --iface eno1 --topspeed
+    sudo .venv/bin/python projects/ethernet/scripts/iex_board_replay.py --iface eno1 --mbps 20
+    sudo .venv/bin/python projects/ethernet/scripts/iex_board_replay.py --iface eno1 --topspeed
 
 Exit status 0 when every record matches and none is missing.
 """
@@ -24,8 +24,8 @@ import threading
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PCAP = REPO_ROOT / "iex_data_broadcast.pcap"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PCAP = PROJECT_DIR / "iex_data_broadcast.pcap"
 
 BBO_ETHERTYPE = 0x88B6
 FPGA_MAC = bytes.fromhex("020000000001")

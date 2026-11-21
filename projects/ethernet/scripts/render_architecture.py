@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Render the data-path flowchart in bitlogic_ethernet/ARCHITECTURE.md as one
+"""Render the data-path flowchart in ARCHITECTURE.md as one
 self-contained HTML page, using the offline diagram-html viewer (sibling
 checkout ../diagram-html) with the flowchart preloaded.
 
-    python3 scripts/render_architecture.py [--viewer ../diagram-html] [--out PATH]
+    python3 projects/ethernet/scripts/render_architecture.py [--viewer ../diagram-html] [--out PATH]
 
-The output (default bitlogic_ethernet/build/architecture.html) has the viewer's
+The output (default build/ethernet/architecture.html) has the viewer's
 CSS and JavaScript inlined, so it opens from disk with no network access.
 """
 
@@ -15,14 +15,15 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
-DOC = REPO / "bitlogic_ethernet" / "ARCHITECTURE.md"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+REPO = PROJECT_DIR.parents[1]
+DOC = PROJECT_DIR / "ARCHITECTURE.md"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--viewer", type=Path, default=REPO.parent / "diagram-html")
-    parser.add_argument("--out", type=Path, default=REPO / "bitlogic_ethernet" / "build" / "architecture.html")
+    parser.add_argument("--out", type=Path, default=REPO / "build" / PROJECT_DIR.name / "architecture.html")
     args = parser.parse_args()
 
     match = re.search(r"```mermaid\n(flowchart.*?)```", DOC.read_text(), re.S)

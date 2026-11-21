@@ -2,7 +2,7 @@
 
 A reimplementation of the former `hls_ethernet/` Layer-2 endpoint (removed
 2026-11-20; see git history) using
-bitlogic (sibling checkout `../../bitlogic`). It has the same identity: MAC
+bitlogic (sibling checkout `../bitlogic` of this repository). It has the same identity: MAC
 `02:00:00:00:00:01` and IP `192.168.1.100`. It replies to ARP requests, sends a
 gratuitous ARP every 5 s, and sends a diagnostics beacon (EtherType `0x88B5`)
 every 1 s. Beyond the HLS design, it checks the FCS of every received frame
@@ -16,10 +16,13 @@ offer of a symbol each time an atomic book update completes. See
 [IEX DEEP feed handler](#iex-deep-feed-handler). This too is verified in
 simulation only.
 
+From the repository root (paths below are relative to this directory,
+`projects/ethernet/`, unless they start with `build/`):
+
 ```sh
-python3 build.py build                          # generate RTL, then Vivado → bitlogic_ethernet/build/bitlogic_ethernet.bit
-python3 build.py program --bitfile bitlogic_ethernet/build/bitlogic_ethernet.bit
-cargo test --release --locked --manifest-path bitlogic_ethernet/Cargo.toml
+python3 build.py build ethernet       # generate RTL, then Vivado → build/ethernet/ethernet.bit
+python3 build.py program ethernet
+cargo test --release --locked -p bitlogic_ethernet
 ```
 
 ## How it is split
@@ -152,7 +155,7 @@ Changes from the HLS top level:
 
 ## Verification
 
-`cargo test --release --locked` runs:
+`cargo test --release --locked -p bitlogic_ethernet` runs:
 
 | Test | Evidence |
 |---|---|
@@ -206,10 +209,11 @@ ARP 7,000, LED holdoff 200). The parameter defaults are the board values.
 
 Breaking the toggle synchronizer's edge detect makes this test fail.
 
-To inspect waveforms after `cargo test --release --test top`:
+To inspect waveforms after `cargo test --release -p bitlogic_ethernet --test top`
+(from the repository root, where the workspace `target/` is):
 
 ```sh
-cd bitlogic_ethernet/target/tmp/xsim_arty_top
+cd target/tmp/xsim_arty_top
 ~/Xilinx/2025.2/Vivado/bin/xsim tb_arty_top_sim -gui
 ```
 
@@ -284,7 +288,7 @@ byte 42.
 
 ### Measured in the cycle model
 
-`cargo run --release --example feed_bench` replays the sample capture at
+`cargo run --release -p bitlogic_ethernet --example feed_bench` replays the sample capture at
 100 Mb/s line rate (minimum inter-frame gap, not the recorded timing) and
 measures at the `eth_core` boundary; one cycle is 40 ns.
 
@@ -354,10 +358,10 @@ after, and the whole design 4,724 / 3,659 before and 4,415 / 3,500 after
 (`proto_unit` drops from 2,426 to 2,229 LUTs through the same release's IR
 folds). The full build, and with it the table above, has not been rerun.
 
-The register-to-register figures come from `build/internal_paths.rpt`,
-written by every build. The build also writes the routed checkpoint
-`build/routed.dcp`; `python3 scripts/floorplan.py` (from the repository root)
-turns it into `build/floorplan.html`: a block diagram of the board and the
+The register-to-register figures come from `build/ethernet/internal_paths.rpt`,
+written by every build (`scripts/post_route.tcl`). The build also writes the routed checkpoint
+`build/ethernet/routed.dcp`; `python3 projects/ethernet/scripts/floorplan.py` (from the repository root)
+turns it into `build/ethernet/floorplan.html`: a block diagram of the board and the
 placed design on the die, colored by module, with I/O banks and pins. The deepest logic is the list walk's one-node-per-cycle loop, which limited
 the core to about 59 MHz in the 2026-11-20 build.
 
@@ -397,7 +401,7 @@ frames arrived with alignment or FCS errors, lost in pairs every ~2.65 ms
 ## Board results
 
 Arty A7-100T on a direct 100 Mb/s full-duplex link to a PC, 2026-11-21,
-`sudo scripts/board_bringup.sh eno1` (logs under `logs/board_<timestamp>/`).
+`sudo projects/ethernet/scripts/board_bringup.sh eno1` (logs under `logs/board_<timestamp>/`).
 Each replay programs the board first, so the book starts empty, then sends
 all 100,000 packets of `iex_data_broadcast.pcap` with `tcpreplay` and
 compares every BBO record with a reference book computed by
@@ -417,11 +421,30 @@ capture's 125-byte average, adding FCS, preamble and the minimum gap (24
 bytes) makes 84,124 frames/s about 100.5 Mb/s, so the topspeed run is the
 link saturated.
 
+## Manual probing
+
+From the repository root:
+
+```sh
+sudo projects/ethernet/scripts/send_broadcast_eth.py eno1 --listen --message ping
+sudo projects/ethernet/scripts/send_broadcast_eth.py eno1 --broadcast --listen --message ping
+sudo projects/ethernet/scripts/verify_l2_endpoint.sh eno1
+```
+
+The board's gratuitous ARP lets a normal host learn that `192.168.1.100` is at
+`02:00:00:00:00:01`:
+
+```sh
+tcpdump -ni eno1 arp
+ip neigh show dev eno1
+ping 192.168.1.100
+```
+
 ## Limits
 
 - Simulation does not model PHY timing, MII pad delays or a real link.
   Board-level validation still uses the existing `tests/hw` suite. Run
-  `python3 build.py test --hardware`
+  `python3 build.py test ethernet --hardware`
   after programming.
 - The TX FIFO adds about 9 `eth_tx_clk` cycles (~360 ns) to every frame and
   can shorten an inter-frame gap by a cycle or two. A mid-frame underrun is

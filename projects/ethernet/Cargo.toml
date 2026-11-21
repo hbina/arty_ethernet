@@ -5,5 +5,9 @@ edition = "2024"
 publish = false
 description = "Arty A7 Layer-2 Ethernet endpoint written as bitlogic next-state functions"
 
+# Read by build.py: the Vivado top module (handwritten in rtl/).
+[package.metadata.arty]
+top = "arty_top"
+
 [dependencies]
-bitlogic = { path = "../../bitlogic/crates/bitlogic" }
+bitlogic.workspace = true

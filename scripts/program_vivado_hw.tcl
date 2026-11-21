@@ -4,11 +4,10 @@ if {[info exists ::env(HW_PORT)]} {
     set port 3121
 }
 
-if {[llength $argv] > 0} {
-    set bitfile [lindex $argv 0]
-} else {
-    set bitfile [file normalize "bitlogic_ethernet/build/bitlogic_ethernet.bit"]
+if {[llength $argv] != 1} {
+    error "usage: vivado -mode batch -source program_vivado_hw.tcl -tclargs <bitfile>"
 }
+set bitfile [lindex $argv 0]
 
 if {![file exists $bitfile]} {
     error "Bitstream not found: $bitfile"

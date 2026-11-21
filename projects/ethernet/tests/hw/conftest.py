@@ -10,8 +10,9 @@ import pytest
 from .ethernet import RawEthernet
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BITFILE = REPO_ROOT / "bitlogic_ethernet" / "build" / "bitlogic_ethernet.bit"
+PROJECT = Path(__file__).resolve().parents[2].name
+REPO_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_BITFILE = REPO_ROOT / "build" / PROJECT / f"{PROJECT}.bit"
 
 
 def pytest_addoption(parser):
@@ -22,6 +23,17 @@ def pytest_addoption(parser):
     group.addoption("--bitfile", default=str(DEFAULT_BITFILE), help="bitstream to program")
     group.addoption("--no-build", action="store_true", help="skip the bitstream build when --program is set")
     group.addoption("--timeout", type=float, default=8.0, help="Ethernet receive timeout in seconds")
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "hardware: needs a programmed board on --iface")
+
+
+def pytest_collection_modifyitems(items):
+    # Every test that talks to the board does so through raw_eth.
+    for item in items:
+        if "raw_eth" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.hardware)
 
 
 def _run(cmd, env=None):
@@ -67,7 +79,7 @@ def programmed_board(request):
     started_server = None
 
     if not request.config.getoption("--no-build"):
-        _run([sys.executable, "build.py", "build"])
+        _run([sys.executable, "build.py", "build", PROJECT])
 
     if not bitfile.exists():
         pytest.fail(f"bitfile does not exist: {bitfile}")
@@ -76,7 +88,7 @@ def programmed_board(request):
         started_server = _start_hw_server(hw_port)
 
     try:
-        _run([sys.executable, "build.py", "program", "--hw-port", str(hw_port), "--bitfile", str(bitfile)])
+        _run([sys.executable, "build.py", "program", PROJECT, "--hw-port", str(hw_port), "--bitfile", str(bitfile)])
     finally:
         if started_server is not None:
             started_server.terminate()

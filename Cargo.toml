@@ -1,0 +1,9 @@
+# One crate per Arty design under projects/. Shared crates go under crates/;
+# add "crates/*" to members once the first one exists (cargo rejects an
+# empty glob).
+[workspace]
+resolver = "3"
+members = ["projects/*"]
+
+[workspace.dependencies]
+bitlogic = { path = "../bitlogic/crates/bitlogic" }

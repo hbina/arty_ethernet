@@ -2,8 +2,8 @@
 """Floorplan page for the routed bitlogic Ethernet design.
 
 Reads the routed checkpoint written by the bitstream build
-(bitlogic_ethernet/build/routed.dcp), asks Vivado for the device grid and
-the placement (bitlogic_ethernet/scripts/dump_floorplan.tcl), and writes one
+(build/ethernet/routed.dcp), asks Vivado for the device grid and
+the placement (scripts/dump_floorplan.tcl), and writes one
 self-contained HTML page with:
 
   * a block diagram of the Arty A7-100T board (not to scale): the chips and
@@ -11,7 +11,7 @@ self-contained HTML page with:
   * the XC7A100T floorplan: every site-bearing tile, the cells of the design
     colored by module, clock regions, I/O banks and the pins the design uses.
 
-    python3 scripts/floorplan.py [--xilinx-root DIR] [--out PATH]
+    python3 projects/ethernet/scripts/floorplan.py [--xilinx-root DIR] [--out PATH]
 
 The Vivado dump is cached next to the checkpoint and redone when the
 checkpoint is newer.
@@ -26,11 +26,12 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
-FLOW = REPO / "bitlogic_ethernet"
-DCP = FLOW / "build" / "routed.dcp"
-DUMP = FLOW / "build" / "floorplan.tsv"
-TCL = FLOW / "scripts" / "dump_floorplan.tcl"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+REPO = PROJECT_DIR.parents[1]
+OUT = REPO / "build" / PROJECT_DIR.name
+DCP = OUT / "routed.dcp"
+DUMP = OUT / "floorplan.tsv"
+TCL = REPO / "scripts" / "dump_floorplan.tcl"
 
 # Module groups, in legend order: (key, label, color, description).
 MODULES = [
@@ -276,10 +277,10 @@ def build(dump_path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--xilinx-root", default=os.environ.get("XILINX_ROOT", "/mnt/extra_pool/Xilinx/2025.2"))
-    ap.add_argument("--out", type=Path, default=FLOW / "build" / "floorplan.html")
+    ap.add_argument("--out", type=Path, default=OUT / "floorplan.html")
     args = ap.parse_args()
     if not DCP.exists():
-        sys.exit(f"{DCP} not found; run python3 build.py build (it writes the routed checkpoint)")
+        sys.exit(f"{DCP} not found; run python3 build.py build ethernet (it writes the routed checkpoint)")
     if not DUMP.exists() or DUMP.stat().st_mtime < DCP.stat().st_mtime:
         run_dump(args.xilinx_root)
     data = build(DUMP)

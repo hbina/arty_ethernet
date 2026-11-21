@@ -1,11 +1,7 @@
-set script_dir [file dirname [file normalize [info script]]]
-set proj_dir [file normalize [file join $script_dir ..]]
-
-if {[llength $argv] > 0} {
-    set bitfile [lindex $argv 0]
-} else {
-    set bitfile [file join $proj_dir bitlogic_ethernet build bitlogic_ethernet.bit]
+if {[llength $argv] != 1} {
+    error "usage: xsct program_hw.tcl <bitfile>"
 }
+set bitfile [lindex $argv 0]
 
 if {![file exists $bitfile]} {
     error "Bitstream not found: $bitfile"

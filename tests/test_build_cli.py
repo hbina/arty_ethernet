@@ -1,6 +1,8 @@
 """Board-independent checks for CLI orchestration and failure handling."""
 
+from contextlib import redirect_stdout
 import importlib.util
+import io
 from pathlib import Path
 import subprocess
 import unittest
@@ -19,9 +21,11 @@ class BuildCliTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         first, second = run.call_args_list
         self.assertEqual(first.args[0][0], "cargo")
-        self.assertIn("bitlogic_ethernet/Cargo.toml", first.args[0])
+        self.assertIn("projects/ethernet/Cargo.toml", first.args[0])
+        self.assertEqual(first.args[0][-1], "build/ethernet/rtl")
         self.assertEqual(second.args[0][0], "/tmp/tools with spaces/Vivado/bin/vivado")
-        self.assertEqual(second.args[0][-1], "bitlogic_ethernet/scripts/build_bitstream.tcl")
+        self.assertEqual(second.args[0][-6:], ["scripts/build_bitstream.tcl", "-tclargs",
+                                               "projects/ethernet", "build/ethernet", "arty_top", "ethernet"])
         self.assertEqual(first.kwargs["env"]["PART"], "test-part")
         self.assertEqual(first.kwargs["cwd"], cli.ROOT)
 
@@ -46,9 +50,9 @@ class BuildCliTests(unittest.TestCase):
     def test_default_tests_exclude_hardware(self, run):
         self.assertEqual(cli.main(["test"]), 0)
         cmd = run.call_args.args[0]
-        self.assertIn("tests/hw/test_ethernet_helpers.py", cmd)
+        self.assertIn("projects/ethernet/tests/hw", cmd)
+        self.assertEqual(cmd[cmd.index("-m", 2) + 1], "not hardware")
         self.assertNotIn("--program", cmd)
-        self.assertNotIn("tests", cmd)
 
     @patch.object(cli.subprocess, "run")
     def test_hardware_test_options_and_environment(self, run):
@@ -59,6 +63,22 @@ class BuildCliTests(unittest.TestCase):
         self.assertIn("--no-build", cmd)
         self.assertIn("enp3s0", cmd)
         self.assertEqual(run.call_args.kwargs["env"]["HW_PORT"], "3125")
+
+    @patch.object(cli.subprocess, "run")
+    def test_program_defaults_to_the_project_bitstream(self, run):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(cli.main(["program", "ethernet", "--dry-run"]), 0)
+        self.assertTrue(out.getvalue().strip().endswith(str(cli.ROOT / "build/ethernet/ethernet.bit")))
+
+    def test_unknown_project_is_rejected(self):
+        with self.assertRaises(SystemExit) as error:
+            cli.main(["build", "no-such-project"])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_every_project_names_its_top_module(self):
+        for name in cli.projects():
+            self.assertTrue(cli.project_top(name))
 
     def test_program_requires_hardware_flag(self):
         with self.assertRaises(SystemExit) as error:

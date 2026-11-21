@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Arty A7-100T bring-up and IEX feed check, in one run:
 #
-#   sudo scripts/board_bringup.sh [iface]        (default iface: eno1)
+#   sudo projects/ethernet/scripts/board_bringup.sh [iface]        (default iface: eno1)
 #
 # Steps (each logged under logs/board_<timestamp>/, with a summary at the end):
 #   1. Program the bitstream (as you, through hw_server) and wait for link.
 #   2. Add a temporary host address 192.168.1.10/24 to the interface
 #      (removed on exit if this script added it).
-#   3. Hardware test suite (tests/hw: ARP, beacons, ICMP echo, peers).
+#   3. Hardware test suite (projects/ethernet/tests/hw: ARP, beacons, ICMP
+#      echo, peers).
 #   4. Kernel ping: 5 normal, 5 full-size (1472 data bytes, DF), and a
 #      flood of 5000 full-size echoes.
 #   5. IEX capture replay at each rate in RATES, each on a freshly
@@ -20,10 +21,12 @@
 set -uo pipefail
 
 IFACE="${1:-eno1}"
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT="$(basename "$PROJECT_DIR")"
+REPO="$(cd "$PROJECT_DIR/../.." && pwd)"
 HW_PORT="${HW_PORT:-3124}"
-BITFILE="${BITFILE:-$REPO/bitlogic_ethernet/build/bitlogic_ethernet.bit}"
-PCAP="${PCAP:-$REPO/iex_data_broadcast.pcap}"
+BITFILE="${BITFILE:-$REPO/build/$PROJECT/$PROJECT.bit}"
+PCAP="${PCAP:-$PROJECT_DIR/iex_data_broadcast.pcap}"
 RATES="${RATES:-20 80 topspeed}"
 HOST_ADDR="192.168.1.10/24"
 FPGA_IP="192.168.1.100"
@@ -43,7 +46,7 @@ if [[ -z "${XILINX_ROOT:-}" ]]; then
 fi
 [[ -x "${XILINX_ROOT:-}/Vivado/bin/vivado" ]] || die "Vivado not found; set XILINX_ROOT"
 [[ -e "/sys/class/net/$IFACE" ]] || die "no interface $IFACE"
-[[ -f "$BITFILE" ]] || die "bitstream not found: $BITFILE (run: python3 build.py build)"
+[[ -f "$BITFILE" ]] || die "bitstream not found: $BITFILE (run: python3 build.py build $PROJECT)"
 [[ -f "$PCAP" ]] || die "capture not found: $PCAP"
 [[ -x "$PY" ]] || die "project venv not found: $PY"
 command -v tcpreplay >/dev/null || die "tcpreplay not installed (apt install tcpreplay)"
@@ -109,7 +112,7 @@ wait_link() {
 # Programs the bitstream and waits for link; $1 names the log.
 program_board() {
     local log="$LOG_DIR/program_$1.log"
-    (cd "$REPO" && as_user python3 build.py program --hw-port "$HW_PORT" \
+    (cd "$REPO" && as_user python3 build.py program "$PROJECT" --hw-port "$HW_PORT" \
         --xilinx-root "$XILINX_ROOT" --bitfile "$BITFILE") >"$log" 2>&1 || {
         echo "programming failed; see $log"
         tail -5 "$log"
@@ -141,8 +144,8 @@ fi
 record "2. host address" "$(ip -4 -br addr show dev "$IFACE" | awk '{print $3}')"
 
 if [[ "${SKIP_PYTEST:-0}" != 1 ]]; then
-    step "3. Hardware test suite (tests/hw)"
-    if "$PY" -m pytest -p no:cacheprovider tests/hw --iface "$IFACE" --timeout 8 -v 2>&1 \
+    step "3. Hardware test suite ($PROJECT/tests/hw)"
+    if "$PY" -m pytest -p no:cacheprovider "$PROJECT_DIR/tests/hw" --iface "$IFACE" --timeout 8 -v 2>&1 \
         | tee "$LOG_DIR/pytest.log"; then
         record "3. tests/hw" "PASS ($(grep -Eo '[0-9]+ passed' "$LOG_DIR/pytest.log" | tail -1))"
     else
@@ -177,7 +180,7 @@ for rate in $RATES; do
     else
         args=(--mbps "$rate")
     fi
-    if "$PY" scripts/iex_board_replay.py --iface "$IFACE" --pcap "$PCAP" "${args[@]}" 2>&1 | tee "$log"; then
+    if "$PY" "$PROJECT_DIR/scripts/iex_board_replay.py" --iface "$IFACE" --pcap "$PCAP" "${args[@]}" 2>&1 | tee "$log"; then
         status=PASS
     else
         status=FAIL
