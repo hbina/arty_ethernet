@@ -18,20 +18,21 @@
 //! (inserting the level if absent). Deleting an absent level changes
 //! nothing, as when the feed starts after the level was added.
 //!
-//! Phases:
+//! Phases ([`BookPhase`]; data only one phase needs is carried by its variant):
 //! - `Clear` (0, the reset phase): invalidate every symbol slot, one per cycle.
 //! - `Idle`: wait for a PLU and for room in the BBO FIFO.
 //! - `Load`: latch the PLU (FIFO read data) and hash its symbol.
-//! - `Probe`: compare one symbol slot per cycle; a vacant slot is claimed.
-//! - `Walk`: follow the side's list one node per cycle until the first node
-//!   that is not better than the PLU price, then update, delete or insert
-//!   there. Inserting after an existing node needs `Link` to rewrite that
-//!   node's `next`.
+//! - `Probe { probes }`: compare one symbol slot per cycle; a vacant slot is
+//!   claimed.
+//! - `Walk(Cursor)`: follow the side's list one node per cycle until the first
+//!   node that is not better than the PLU price, then update, delete or insert
+//!   there. Inserting after an existing node needs `Link { after, node }` to
+//!   rewrite that node's `next`.
 //! - `Finish`: write the symbol's list heads back.
-//! - `BidRead`, `AskRead`, `Emit`: on an event-ending PLU, read both heads and
-//!   write the 32-byte BBO record into the BBO FIFO as four 64-bit words:
-//!   symbol, bid price, offer price, `{offer size, bid size}`. An empty side
-//!   reads as price 0 and size 0.
+//! - `BidRead`, `AskRead { bid }`, `Emit { bid, ask, word }`: on an
+//!   event-ending PLU, read both heads and write the 32-byte BBO record into
+//!   the BBO FIFO as four 64-bit words: symbol, bid price, offer price,
+//!   `{offer size, bid size}`. An empty side reads as price 0 and size 0.
 //!
 //! Every RAM read address is derived from the next state, so the read data in
 //! a cycle belongs to the current state. A RAM never returns data written on
@@ -53,18 +54,44 @@ pub const MAX_HOPS: u64 = 64;
 /// BBO FIFO depth in records; pointers carry one wrap bit.
 pub const BBO_FIFO_DEPTH: usize = 256;
 
+/// A position in one side's price list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
+pub struct Cursor {
+    /// The node read this cycle (0: the end of the list).
+    pub cur: Bits<13>,
+    /// The node before it (0: `cur` is the head).
+    pub prev: Bits<13>,
+    pub hops: Bits<7>,
+}
+
+/// The book's phase, with the data that only that phase uses. `Clear` comes
+/// first: the register resets to all zeros.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
 pub enum BookPhase {
     Clear,
     Idle,
     Load,
-    Probe,
-    Walk,
-    Link,
+    /// Symbol slots compared so far, minus one.
+    Probe {
+        probes: Bits<5>,
+    },
+    Walk(Cursor),
+    /// Point `after.next` at the newly inserted `node`.
+    Link {
+        after: Bits<13>,
+        node: Bits<13>,
+    },
     Finish,
     BidRead,
-    AskRead,
-    Emit,
+    AskRead {
+        bid: Level,
+    },
+    /// Writing BBO word `word` of the record.
+    Emit {
+        bid: Level,
+        ask: Level,
+        word: Bits<2>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, LogicValue)]
@@ -102,26 +129,16 @@ pub struct BookState {
     pub plu: Plu,
     /// Consumer side of the PLU FIFO.
     pub plu_rd_ptr: Bits<7>,
-    /// Symbol slot being probed (also the clear index).
+    /// Symbol slot being probed, then written back in `Finish` (also the
+    /// clear index).
     pub slot: Bits<11>,
-    pub probes: Bits<5>,
     /// List heads of the current symbol.
     pub bid_head: Bits<13>,
     pub ask_head: Bits<13>,
-    /// List walk: the node read this cycle and the one before it (0: none).
-    pub cur: Bits<13>,
-    pub prev: Bits<13>,
-    pub hops: Bits<7>,
-    /// Node allocated by an insert, linked in by `Link`.
-    pub new_node: Bits<13>,
     /// Never-used nodes taken so far; the next is `used + 1`.
     pub used: Bits<13>,
     /// Entries on the free stack.
     pub free_sp: Bits<14>,
-    pub bid: Level,
-    pub ask: Level,
-    /// BBO word being written.
-    pub word: Bits<2>,
     /// Producer side of the BBO FIFO.
     pub bbo_wr_ptr: Bits<9>,
     pub counters: BookCounters,
@@ -199,6 +216,19 @@ fn pack_meta(bid_head: Bits<13>, ask_head: Bits<13>) -> Bits<27> {
         .concat::<13, 27>(ask_head)
 }
 
+/// The level at a list head, or the empty level for an empty list.
+#[logic]
+fn head_level(head: Bits<13>, node: Level) -> Level {
+    if head == bits::<13>(0) {
+        Level {
+            price: bits::<64>(0),
+            size: bits::<32>(0),
+        }
+    } else {
+        node
+    }
+}
+
 #[logic]
 pub fn book_step(input: BookIn) -> BookOut {
     let s = input.state;
@@ -208,13 +238,28 @@ pub fn book_step(input: BookIn) -> BookOut {
     let clearing = s.phase == BookPhase::Clear;
     let idle = s.phase == BookPhase::Idle;
     let loading = s.phase == BookPhase::Load;
-    let probing = s.phase == BookPhase::Probe;
-    let walking = s.phase == BookPhase::Walk;
-    let linking = s.phase == BookPhase::Link;
     let finishing = s.phase == BookPhase::Finish;
-    let bid_reading = s.phase == BookPhase::BidRead;
-    let ask_reading = s.phase == BookPhase::AskRead;
-    let emitting = s.phase == BookPhase::Emit;
+    let probing = matches!(s.phase, BookPhase::Probe { .. });
+    let walking = matches!(s.phase, BookPhase::Walk(_));
+    let linking = matches!(s.phase, BookPhase::Link { .. });
+    let emitting = matches!(s.phase, BookPhase::Emit { .. });
+    // Phase data, read as zero outside its phase.
+    let probes = match s.phase {
+        BookPhase::Probe { probes } => probes,
+        _ => bits::<5>(0),
+    };
+    let walk = match s.phase {
+        BookPhase::Walk(c) => c,
+        _ => Cursor {
+            cur: bits::<13>(0),
+            prev: bits::<13>(0),
+            hops: bits::<7>(0),
+        },
+    };
+    let word = match s.phase {
+        BookPhase::Emit { word, .. } => word,
+        _ => bits::<2>(0),
+    };
 
     // Idle: take a PLU only when its BBO record is sure to fit.
     let plu_avail = s.plu_rd_ptr != input.plu_wr_ptr;
@@ -238,20 +283,20 @@ pub fn book_step(input: BookIn) -> BookOut {
     let hit = probing && meta_valid && input.sym_key == q.symbol;
     let vacant = probing && !meta_valid;
     let collide = probing && meta_valid && input.sym_key != q.symbol;
-    let table_full = collide && s.probes == bits::<5>(15);
+    let table_full = collide && probes == bits::<5>(15);
     let start_walk = hit || vacant;
     let hit_head = if q.sell { meta_ask } else { meta_bid };
 
     // Walk: the current node is better than the PLU price (keep going), at
     // the PLU price, or past it / the end of the list (stop here).
-    let at_end = s.cur == bits::<13>(0);
+    let at_end = walk.cur == bits::<13>(0);
     let np = input.node_price;
     let nn = input.node_next;
     let better = if q.sell { np < q.price } else { np > q.price };
     let before = walking && !at_end && better;
     let same = walking && !at_end && np == q.price;
     let stop = walking && !before;
-    let too_deep = before && s.hops == bits::<7>(63);
+    let too_deep = before && walk.hops == bits::<7>(63);
     let advance = before && !too_deep;
     let zero_size = q.size == bits::<32>(0);
     let deleting = same && zero_size;
@@ -266,10 +311,17 @@ pub fn book_step(input: BookIn) -> BookOut {
     } else {
         s.used + bits::<13>(1)
     };
-    let at_head = s.prev == bits::<13>(0);
+    let at_head = walk.prev == bits::<13>(0);
     let set_head = (deleting || inserting) && at_head;
     let new_head = if deleting { nn } else { alloc };
     let need_link = inserting && !at_head;
+
+    // BidRead/AskRead: the node read is the head of that side.
+    let node_level = Level {
+        price: np,
+        size: input.node_size,
+    };
+    let emit_last = emitting && word == bits::<2>(3);
 
     let next_phase = match s.phase {
         BookPhase::Clear => {
@@ -286,28 +338,43 @@ pub fn book_step(input: BookIn) -> BookOut {
                 BookPhase::Idle
             }
         }
-        BookPhase::Load => BookPhase::Probe,
-        BookPhase::Probe => {
+        BookPhase::Load => BookPhase::Probe {
+            probes: bits::<5>(0),
+        },
+        BookPhase::Probe { probes } => {
             if start_walk {
-                BookPhase::Walk
+                BookPhase::Walk(Cursor {
+                    cur: if hit { hit_head } else { bits::<13>(0) },
+                    prev: bits::<13>(0),
+                    hops: bits::<7>(0),
+                })
             } else if table_full {
                 BookPhase::Idle
             } else {
-                BookPhase::Probe
+                BookPhase::Probe {
+                    probes: probes + bits::<5>(1),
+                }
             }
         }
-        BookPhase::Walk => {
+        BookPhase::Walk(c) => {
             if advance {
-                BookPhase::Walk
+                BookPhase::Walk(Cursor {
+                    cur: nn,
+                    prev: c.cur,
+                    hops: c.hops + bits::<7>(1),
+                })
             } else if too_deep {
                 BookPhase::Idle
             } else if need_link {
-                BookPhase::Link
+                BookPhase::Link {
+                    after: c.prev,
+                    node: alloc,
+                }
             } else {
                 BookPhase::Finish
             }
         }
-        BookPhase::Link => BookPhase::Finish,
+        BookPhase::Link { .. } => BookPhase::Finish,
         BookPhase::Finish => {
             if q.event {
                 BookPhase::BidRead
@@ -315,162 +382,151 @@ pub fn book_step(input: BookIn) -> BookOut {
                 BookPhase::Idle
             }
         }
-        BookPhase::BidRead => BookPhase::AskRead,
-        BookPhase::AskRead => BookPhase::Emit,
-        BookPhase::Emit => {
-            if s.word == bits::<2>(3) {
+        BookPhase::BidRead => BookPhase::AskRead {
+            bid: head_level(s.bid_head, node_level),
+        },
+        BookPhase::AskRead { bid } => BookPhase::Emit {
+            bid,
+            ask: head_level(s.ask_head, node_level),
+            word: bits::<2>(0),
+        },
+        BookPhase::Emit { bid, ask, word } => {
+            if word == bits::<2>(3) {
                 BookPhase::Idle
             } else {
-                BookPhase::Emit
+                BookPhase::Emit {
+                    bid,
+                    ask,
+                    word: word + bits::<2>(1),
+                }
             }
         }
     };
 
-    let head_level = Level {
-        price: np,
-        size: input.node_size,
+    let plu = if loading { loaded } else { q };
+    // Advanced in `Load`, after the read of entry `plu_rd_ptr` issued in
+    // `Idle` has returned.
+    let plu_rd_ptr = if loading {
+        s.plu_rd_ptr + bits::<7>(1)
+    } else {
+        s.plu_rd_ptr
     };
-    let empty = Level {
-        price: bits::<64>(0),
-        size: bits::<32>(0),
+    let slot = if clearing {
+        s.slot + bits::<11>(1)
+    } else if loading {
+        symbol_hash(loaded.symbol)
+    } else if collide {
+        s.slot + bits::<11>(1)
+    } else {
+        s.slot
     };
-    let emit_last = emitting && s.word == bits::<2>(3);
+    let bid_head = if hit {
+        meta_bid
+    } else if vacant {
+        bits::<13>(0)
+    } else if set_head && !q.sell {
+        new_head
+    } else {
+        s.bid_head
+    };
+    let ask_head = if hit {
+        meta_ask
+    } else if vacant {
+        bits::<13>(0)
+    } else if set_head && q.sell {
+        new_head
+    } else {
+        s.ask_head
+    };
+    let used = if inserting && !have_free {
+        s.used + bits::<13>(1)
+    } else {
+        s.used
+    };
+    let free_sp = if deleting {
+        s.free_sp + bits::<14>(1)
+    } else if inserting && have_free {
+        s.free_sp - bits::<14>(1)
+    } else {
+        s.free_sp
+    };
+    let bbo_wr_ptr = if emit_last {
+        s.bbo_wr_ptr + bits::<9>(1)
+    } else {
+        s.bbo_wr_ptr
+    };
+
+    let updates = bump32(n.updates, loading);
+    let bbos = bump32(n.bbos, emit_last);
+    let symbols = bump32(n.symbols, vacant);
+    let levels = if inserting {
+        n.levels + bits::<32>(1)
+    } else if deleting {
+        n.levels - bits::<32>(1)
+    } else {
+        n.levels
+    };
+    let errors = bump32(n.errors, table_full || too_deep || pool_empty);
+    let counters = BookCounters {
+        updates,
+        bbos,
+        symbols,
+        levels,
+        errors,
+    };
 
     let next = BookState {
         phase: next_phase,
-        plu: if loading { loaded } else { q },
-        // Advanced in `Load`, after the read of entry `plu_rd_ptr` issued in
-        // `Idle` has returned.
-        plu_rd_ptr: if loading {
-            s.plu_rd_ptr + bits::<7>(1)
-        } else {
-            s.plu_rd_ptr
-        },
-        slot: if clearing {
-            s.slot + bits::<11>(1)
-        } else if loading {
-            symbol_hash(loaded.symbol)
-        } else if collide {
-            s.slot + bits::<11>(1)
-        } else {
-            s.slot
-        },
-        probes: if loading {
-            bits::<5>(0)
-        } else if collide {
-            s.probes + bits::<5>(1)
-        } else {
-            s.probes
-        },
-        bid_head: if hit {
-            meta_bid
-        } else if vacant {
-            bits::<13>(0)
-        } else if set_head && !q.sell {
-            new_head
-        } else {
-            s.bid_head
-        },
-        ask_head: if hit {
-            meta_ask
-        } else if vacant {
-            bits::<13>(0)
-        } else if set_head && q.sell {
-            new_head
-        } else {
-            s.ask_head
-        },
-        cur: if hit {
-            hit_head
-        } else if vacant {
-            bits::<13>(0)
-        } else if advance {
-            nn
-        } else {
-            s.cur
-        },
-        prev: if start_walk {
-            bits::<13>(0)
-        } else if advance {
-            s.cur
-        } else {
-            s.prev
-        },
-        hops: if start_walk {
-            bits::<7>(0)
-        } else if advance {
-            s.hops + bits::<7>(1)
-        } else {
-            s.hops
-        },
-        new_node: if inserting { alloc } else { s.new_node },
-        used: if inserting && !have_free {
-            s.used + bits::<13>(1)
-        } else {
-            s.used
-        },
-        free_sp: if deleting {
-            s.free_sp + bits::<14>(1)
-        } else if inserting && have_free {
-            s.free_sp - bits::<14>(1)
-        } else {
-            s.free_sp
-        },
-        bid: if bid_reading {
-            if s.bid_head == bits::<13>(0) {
-                empty
-            } else {
-                head_level
-            }
-        } else {
-            s.bid
-        },
-        ask: if ask_reading {
-            if s.ask_head == bits::<13>(0) {
-                empty
-            } else {
-                head_level
-            }
-        } else {
-            s.ask
-        },
-        word: if emitting {
-            s.word + bits::<2>(1)
-        } else {
-            bits::<2>(0)
-        },
-        bbo_wr_ptr: if emit_last {
-            s.bbo_wr_ptr + bits::<9>(1)
-        } else {
-            s.bbo_wr_ptr
-        },
-        counters: BookCounters {
-            updates: bump32(n.updates, loading),
-            bbos: bump32(n.bbos, emit_last),
-            symbols: bump32(n.symbols, vacant),
-            levels: if inserting {
-                n.levels + bits::<32>(1)
-            } else if deleting {
-                n.levels - bits::<32>(1)
-            } else {
-                n.levels
-            },
-            errors: bump32(n.errors, table_full || too_deep || pool_empty),
-        },
+        plu,
+        plu_rd_ptr,
+        slot,
+        bid_head,
+        ask_head,
+        used,
+        free_sp,
+        bbo_wr_ptr,
+        counters,
     };
 
+    // Nodes are read only for `Walk` and the two head reads.
     let node_raddr = match next.phase {
+        BookPhase::Walk(c) => c.cur,
         BookPhase::BidRead => next.bid_head,
-        BookPhase::AskRead => next.ask_head,
-        _ => next.cur,
+        BookPhase::AskRead { .. } => next.ask_head,
+        _ => bits::<13>(0),
     };
-    let bbo_word = [
-        q.symbol,
-        s.bid.price,
-        s.ask.price,
-        s.ask.size.concat::<32, 64>(s.bid.size),
-    ]
-    .at(s.word);
+    let bbo_word = match s.phase {
+        BookPhase::Emit { bid, ask, word } => [
+            q.symbol,
+            bid.price,
+            ask.price,
+            ask.size.concat::<32, 64>(bid.size),
+        ]
+        .at(word),
+        _ => bits::<64>(0),
+    };
+    // `Walk` writes an inserted node's `next`, or unlinks a deleted node from
+    // its predecessor; `Link` points `after.next` at the inserted node.
+    let node_next_waddr = match s.phase {
+        BookPhase::Link { after, .. } => after,
+        _ => {
+            if inserting {
+                alloc
+            } else {
+                walk.prev
+            }
+        }
+    };
+    let node_next_wdata = match s.phase {
+        BookPhase::Link { node, .. } => node,
+        _ => {
+            if inserting {
+                walk.cur
+            } else {
+                nn
+            }
+        }
+    };
 
     BookOut {
         state: next,
@@ -486,26 +542,20 @@ pub fn book_step(input: BookIn) -> BookOut {
             pack_meta(s.bid_head, s.ask_head)
         },
         node_raddr,
-        node_waddr: if inserting { alloc } else { s.cur },
+        node_waddr: if inserting { alloc } else { walk.cur },
         node_price_we: inserting,
         node_price_wdata: q.price,
         node_size_we: inserting || updating,
         node_size_wdata: q.size,
         node_next_we: inserting || (deleting && !at_head) || linking,
-        node_next_waddr: if inserting { alloc } else { s.prev },
-        node_next_wdata: if inserting {
-            s.cur
-        } else if linking {
-            s.new_node
-        } else {
-            nn
-        },
+        node_next_waddr,
+        node_next_wdata,
         free_raddr: (next.free_sp - bits::<14>(1)).slice::<13>(0),
         free_we: deleting,
         free_waddr: s.free_sp.slice::<13>(0),
-        free_wdata: s.cur,
+        free_wdata: walk.cur,
         bbo_we: emitting,
-        bbo_waddr: s.bbo_wr_ptr.slice::<8>(0).concat::<2, 10>(s.word),
+        bbo_waddr: s.bbo_wr_ptr.slice::<8>(0).concat::<2, 10>(word),
         bbo_wdata: bbo_word,
     }
 }

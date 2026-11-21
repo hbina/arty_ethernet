@@ -246,7 +246,11 @@ go onto a free stack and are reused first. Deleting an absent level is a
 no-op, so a feed joined mid-session works. A PLU with Event Flags bit 0 set
 ends an atomic event; the book then reads both heads and writes a BBO record.
 A PLU costs `9 + depth walked` cycles. Failures (table full, a walk past 64
-nodes, pool exhausted) drop the PLU and count in `errors`.
+nodes, pool exhausted) drop the PLU and count in `errors`. The phase is an
+enum with fields (2026-11-21): data that only one phase uses travels in its
+variant (`Probe { probes }`, `Walk(Cursor)`, `Link { after, node }`,
+`AskRead { bid }`, `Emit { bid, ask, word }`), so it cannot be read in the
+wrong phase and is zero outside it.
 
 **BBO frames.** The protocol unit drains the BBO FIFO when it is otherwise
 idle and the TX ring has room, up to 46 records per frame, so records batch
@@ -327,6 +331,17 @@ handler (rebuilt 2026-11-21 with the TX FIFO):
 | `eth_tx_clk` (40 ns) MII output setup | +20.6 ns, from IOB registers | not constrained |
 | `eth_rx_clk` (40 ns) worst setup | +10.105 ns, an `eth_rxd` input path under the XDC's 30 ns input delay | +26.521 ns |
 | `eth_rx_clk` worst register-to-register path | 18.557 ns, slack +20.681 ns: `eth_rst` fanout to the book state (97% routing). Before the TX FIFO it was 16.868 ns: `node_price` BRAM output, 64-bit price compare, next-node select, `node_size` read address (13 levels) | — |
+
+These figures predate the 2026-11-21 move of the book's per-phase data into
+its phase enum, and the full build has not been rerun since. Out-of-context
+synthesis of `book_unit` alone (Vivado 2025.2, same part, generated with the
+same bitlogic revision for both) gives 812 LUTs / 650 registers before and
+1,023 LUTs / 763 registers after. Variant fields do not share storage: the
+bid level is held in both `AskRead` and `Emit` (+96 bits) and `Link` has its
+own `after` (+13), so the state grows from 651 to 760 bits. The extra LUTs
+mostly clear a phase's fields when the phase ends. Estimated
+setup slack at 40 ns is +33.4 ns before and +33.2 ns after, without BRAM or
+routing.
 
 The register-to-register figures come from `build/internal_paths.rpt`,
 written by every build. The build also writes the routed checkpoint

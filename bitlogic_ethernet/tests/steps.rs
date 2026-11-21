@@ -9,14 +9,45 @@ use common::Rng;
 use std::fmt::Debug;
 
 fn random<T: LogicValue>(rng: &mut Rng) -> T {
-    let values: Vec<u64> = T::schema()
-        .leaves()
-        .iter()
-        .map(|(_, leaf)| {
-            // Enum leaves only take their declared encodings.
-            if let Schema::Enum { variants, .. } = leaf {
-                return variants[(rng.next() % variants.len() as u64) as usize].1;
+    let mut values = Vec::new();
+    random_leaves(&T::schema(), rng, &mut values);
+    T::from_values(&values).unwrap()
+}
+
+/// Random valid leaves: enums take only their declared encodings, and an enum
+/// with fields fills only the chosen variant's fields (the others are zero).
+fn random_leaves(schema: &Schema, rng: &mut Rng, out: &mut Vec<u64>) {
+    match schema {
+        Schema::Struct { fields, .. } => {
+            for (_, field) in fields {
+                random_leaves(field, rng, out);
             }
+        }
+        Schema::Array { element, len } => {
+            for _ in 0..*len {
+                random_leaves(element, rng, out);
+            }
+        }
+        Schema::Enum { variants, .. } => {
+            out.push(variants[(rng.next() % variants.len() as u64) as usize].1);
+        }
+        Schema::Tagged { tag, payloads, .. } => {
+            let Schema::Enum { variants, .. } = &**tag else {
+                unreachable!("a tag is an enum");
+            };
+            let chosen = (rng.next() % variants.len() as u64) as usize;
+            out.push(variants[chosen].1);
+            for (i, (_, fields)) in payloads.iter().enumerate() {
+                for (_, field) in fields {
+                    if i == chosen {
+                        random_leaves(field, rng, out);
+                    } else {
+                        out.extend(field.zero_values());
+                    }
+                }
+            }
+        }
+        leaf => {
             let width = leaf.width().unwrap();
             // Bias toward small values so equality guards are exercised.
             let raw = if rng.next().is_multiple_of(4) {
@@ -24,10 +55,9 @@ fn random<T: LogicValue>(rng: &mut Rng) -> T {
             } else {
                 rng.next()
             };
-            raw & (u64::MAX >> (64 - width))
-        })
-        .collect();
-    T::from_values(&values).unwrap()
+            out.push(raw & (u64::MAX >> (64 - width)));
+        }
+    }
 }
 
 fn agree<I, O>(ir: Logic, native: fn(I) -> O, seed: u64, cases: usize)
